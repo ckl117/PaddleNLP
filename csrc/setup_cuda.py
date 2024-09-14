@@ -32,6 +32,15 @@ def clone_git_repo(version, repo_url, destination_path):
         return False
 
 
+def find_end_files(directory, end_str):
+    gen_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith(end_str):
+                gen_files.append(os.path.join(root, file))
+    return gen_files
+
+
 def get_sm_version():
     prop = paddle.device.cuda.get_device_properties()
     cc = prop.major * 10 + prop.minor
