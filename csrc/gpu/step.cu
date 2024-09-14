@@ -67,9 +67,9 @@ __global__ void free_and_dispatch_block(bool *stop_flags,
         }
     }
     __syncthreads();
-    if (tid == 0) {
-        printf("need_block_len: %d, free_list_len: %d\n", need_block_len[0], free_list_len[0]);
-    }
+    // if (tid == 0) {
+    //     printf("need_block_len: %d, free_list_len: %d\n", need_block_len[0], free_list_len[0]);
+    // }
 
     while (need_block_len[0] > free_list_len[0]) {
         
