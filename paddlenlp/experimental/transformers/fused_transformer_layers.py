@@ -2278,8 +2278,14 @@ class FusedBlockMultiTransformerFP8(Layer):
         self.ffn1_0_weights, self.ffn1_0_biases = [], []
         self.ffn1_1_weights, self.ffn1_1_biases = [], []
         self.ffn2_weights, self.ffn2_biases = [], []
+        # moe
+        self.gate_weights = []
+        assert self.config.moe_config.has_shared_expert() is False, "MoE is not supported shared_expert"
+
         self.cache_k_scales, self.cache_v_scales = [], []
         self.cache_k_out_scales, self.cache_v_out_scales = [], []
+
+        self.init_weight_shape(config)
 
         for i in range(self.num_layers):
             ln_scale_attr = self.get_attr(config.ln_scale_attrs, i)
@@ -2298,6 +2304,12 @@ class FusedBlockMultiTransformerFP8(Layer):
             ffn1_1_bias_attr = self.get_attr(config.ffn1_1_bias_attrs, i)
             ffn2_weight_attr = self.get_attr(config.ffn2_weight_attrs, i)
             ffn2_bias_attr = self.get_attr(config.ffn2_bias_attrs, i)
+            # moe
+            # gate_weight_attr = self.get_attr(config.gate_weight_attrs, i)
+            # if self.config.moe_config.use_shared_expert(i):
+            #     shared_expert_gate_weight_attr = self.get_attr(config.moe_config.shared_expert_gate_weight_attrs, i)
+            #     shared_expert_ffn1_weight_attr = self.get_attr(config.moe_config.shared_expert_ffn1_weight_attrs, i)
+            #     shared_expert_ffn2_weight_attr = self.get_attr(config.moe_config.shared_expert_ffn2_weight_attrs, i)
 
             cache_k_scale_attr = self.get_attr(config.cache_k_scale_attrs, i)
             cache_v_scale_attr = self.get_attr(config.cache_v_scale_attrs, i)
@@ -2318,8 +2330,6 @@ class FusedBlockMultiTransformerFP8(Layer):
                     is_bias=True,
                     dtype=self._norm_weight_dtype,
                 )
-
-            self.init_weight_shape(config)
 
             qkv_weight = self.create_parameter(
                 shape=self.qkv_weight_shape,
@@ -2369,6 +2379,17 @@ class FusedBlockMultiTransformerFP8(Layer):
                     is_bias=True,
                     dtype=self._norm_weight_dtype,
                 )
+
+            # gate_weight = None
+
+            # if self.config.moe_config.use_moe(i):
+            #     gate_weight = self.create_parameter(
+            #         shape=[config.embed_dim, self.config.moe_config.num_experts],
+            #         attr=gate_weight_attr,
+            #         dtype="float32",
+            #         is_bias=False,
+            #         default_initializer=paddle.nn.initializer.Constant(0),
+            #     )
 
             ffn1_0_weight = self.create_parameter(
                 shape=self.ffn1_0_weight_shape,
@@ -2547,6 +2568,12 @@ class FusedBlockMultiTransformerFP8(Layer):
         self.ffn1_0_weight_shape = [self.dim_feedforward, self.embed_dim]
         self.ffn1_1_weight_shape = [self.dim_feedforward, self.embed_dim]
         self.ffn2_weight_shape = [self.embed_dim, self.dim_feedforward]
+
+        # moe
+        if self.config.moe_config.has_moe() is True:
+            self.moe_ffn1_0_weight_shape = [self.config.moe_config.num_experts, self.embed_dim, self.dim_feedforward]
+            self.moe_ffn1_1_weight_shape = [self.config.moe_config.num_experts, self.embed_dim, self.dim_feedforward]
+            self.moe_ffn2_weight_shape = [self.config.moe_config.num_experts, self.dim_feedforward, self.embed_dim]
 
     def get_weight_create_dype(self):
         """
@@ -2809,6 +2836,22 @@ class FusedBlockMultiTransformerFP8(Layer):
             act="identity",
         )
 
+    def compute_fused_moe(self, tmp_out, i):
+        fused_moe_out = fused_moe(
+            tmp_out,
+            self.gate_weights[i],
+            self.ffn1_weights[i],
+            self.ffn2_weights[i],
+            self.ffn1_biases[i],
+            None,
+            self.ffn2_biases[i],
+            None,
+            "None",
+            self.config.moe_config.top_k,
+            self.config.moe_config.norm_topk_prob,
+        )
+        return fused_moe_out
+
     def compute_bias_residual_layernorm(self, ffn2_out, residual_input, i, num_layers):
         """
         For fake parameter
@@ -2954,11 +2997,20 @@ class FusedBlockMultiTransformerFP8(Layer):
             # ffn layernorm
             tmp_out, residual_input = self.compute_ffn_layernorm(out_linear_out, residual_input, i)
 
-            # ffn1 matmul
-            ffn1_out = self.compute_ffn1(tmp_out, i)
+            if self.config.moe_config.use_moe(i):
+                # fused moe
+                ffn2_out = self.compute_fused_moe(tmp_out, i)
 
-            # ffn2 matmul
-            ffn2_out = self.compute_ffn2(ffn1_out, i)
+                # do not support shared_expert
+                # if self.config.moe_config.use_shared_expert(i):
+                #     shared_expert_out = self.compute_shared_expert(tmp_out, i)
+                #     ffn2_out = ffn2_out + shared_expert_out
+            else:
+                # ffn1 matmul
+                ffn1_out = self.compute_ffn1(tmp_out, i)
+
+                # ffn2 matmul
+                ffn2_out = self.compute_ffn2(ffn1_out, i)
 
             # all_reduce
             if self.nranks > 1:

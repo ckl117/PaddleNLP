@@ -26,11 +26,13 @@ from paddle.nn.quant import weight_quantize
 from paddlenlp.experimental.model_utils import (
     ActScalesLoader,
     CacheScaleLoader,
+    PerTensorWeightScalesLoader,
     WeightScalesLoader,
 )
 from paddlenlp.experimental.transformers.fused_transformer_layers import (
     FusedBlockMultiTransformer,
     FusedBlockMultiTransformerA8W8,
+    FusedBlockMultiTransformerFP8,
     FusedBlockMultiTransformerWeightOnly,
     FusedMultiTransformerA8W8,
     FusedMultiTransformerBase,
@@ -172,12 +174,26 @@ class MixtralInferenceModel(MixtralPretrainedModel):
         gate_weight_attrs = [
             paddle.ParamAttr(name="fusemixtral.{}.gate_weight".format(i)) for i in range(self.num_layers)
         ]
-        ffn1_weight_attrs = [
-            paddle.ParamAttr(
-                name="fusemixtral.{}.ffn1_weight".format(i), initializer=paddle.nn.initializer.Constant(value=0)
-            )
-            for i in range(self.num_layers)
-        ]
+        if "fp8" in self.quant_type:
+            ffn1_0_weight_attrs = [
+                paddle.ParamAttr(
+                    name="fusemixtral.{}.ffn1_0_weight".format(i), initializer=paddle.nn.initializer.Constant(value=0)
+                )
+                for i in range(self.num_layers)
+            ]
+            ffn1_1_weight_attrs = [
+                paddle.ParamAttr(
+                    name="fusemixtral.{}.ffn1_1_weight".format(i), initializer=paddle.nn.initializer.Constant(value=0)
+                )
+                for i in range(self.num_layers)
+            ]
+        else:
+            ffn1_weight_attrs = [
+                paddle.ParamAttr(
+                    name="fusemixtral.{}.ffn1_weight".format(i), initializer=paddle.nn.initializer.Constant(value=0)
+                )
+                for i in range(self.num_layers)
+            ]
         ffn2_weight_attrs = [
             paddle.ParamAttr(
                 name="fusemixtral.{}.ffn2_weight".format(i), initializer=paddle.nn.initializer.Constant(value=0)
@@ -293,54 +309,89 @@ class MixtralInferenceModel(MixtralPretrainedModel):
             norm_topk_prob=True,
             moe_every2=self.moe_every2,
         )
-
-        transformer_config = FusedMultiTransformerConfig(
-            embed_dim=self.hidden_size,
-            num_heads=self.num_attention_heads,
-            kv_num_heads=self.num_key_value_heads,
-            dim_feedforward=self.intermediate_size,
-            quant_type=self.quant_type,
-            activation="swiglu",
-            num_layers=config.num_hidden_layers,
-            nranks=config.tensor_parallel_degree,
-            ring_id=ring_id,
-            ln_scale_attrs=ln_scale_attrs,
-            qkv_weight_attrs=qkv_weight_attrs,
-            qkv_weight_scale_attrs=qkv_weight_scale_attrs,
-            linear_weight_attrs=out_proj_weight_attrs,
-            linear_weight_scale_attrs=out_proj_weight_scale_attrs,
-            ffn_ln_scale_attrs=ffn_ln_scale_attrs,
-            gate_weight_attrs=gate_weight_attrs,
-            ffn1_weight_attrs=ffn1_weight_attrs,
-            ffn1_weight_scale_attrs=ffn1_weight_scale_attrs,
-            ffn2_weight_attrs=ffn2_weight_attrs,
-            ffn2_weight_scale_attrs=ffn2_weight_scale_attrs,
-            qkv_out_scale_attrs=qkv_out_scale_attrs,
-            linear_out_scale_attrs=linear_out_scale_attrs,
-            ffn1_out_scale_attrs=ffn1_out_scale_attrs,
-            ffn2_out_scale_attrs=ffn2_out_scale_attrs,
-            linear_shift_attrs=linear_shift_attrs,
-            linear_smooth_attrs=linear_smooth_attrs,
-            ffn2_shift_attrs=ffn2_shift_attrs,
-            ffn2_smooth_attrs=ffn2_smooth_attrs,
-            ln_bias_attrs=ln_bias_attrs,
-            qkv_bias_attrs=qkv_bias_attrs,
-            linear_bias_attrs=out_proj_bias_attrs,
-            ffn_ln_bias_attrs=ffn_ln_bias_attrs,
-            ffn1_bias_attrs=ffn1_bias_attrs,
-            ffn2_bias_attrs=ffn2_bias_attrs,
-            cache_k_scale_attrs=cache_k_scale_attrs,
-            cache_v_scale_attrs=cache_v_scale_attrs,
-            cache_k_out_scale_attrs=cache_k_out_scale_attrs,
-            cache_v_out_scale_attrs=cache_v_out_scale_attrs,
-            epsilon=self.epsilon,
-            norm_type="rmsnorm",
-            use_neox_rotary_style=self.use_neox,
-            cachekv_int8_type=config.cachekv_int8_type,
-            rank_id=config.tensor_parallel_rank,
-            trans_qkvw=(False if paddle.is_compiled_with_rocm() and "a8w8" in self.quant_type else True),
-            moe_config=moe_config,
-        )
+        if "fp8" in self.quant_type:
+            transformer_config = FusedMultiTransformerConfig(
+                embed_dim=self.hidden_size,
+                num_heads=self.num_attention_heads,
+                kv_num_heads=self.num_key_value_heads,
+                dim_feedforward=self.intermediate_size,
+                quant_type=self.quant_type,
+                activation="swiglu",
+                num_layers=config.num_hidden_layers,
+                nranks=config.tensor_parallel_degree,
+                ring_id=ring_id,
+                ln_scale_attrs=ln_scale_attrs,
+                ln_bias_attrs=ln_bias_attrs,
+                qkv_weight_attrs=qkv_weight_attrs,
+                qkv_bias_attrs=qkv_bias_attrs,
+                linear_weight_attrs=out_proj_weight_attrs,
+                linear_bias_attrs=out_proj_bias_attrs,
+                ffn_ln_scale_attrs=ffn_ln_scale_attrs,
+                ffn_ln_bias_attrs=ffn_ln_bias_attrs,
+                cache_k_scale_attrs=cache_k_scale_attrs,
+                cache_v_scale_attrs=cache_v_scale_attrs,
+                cache_k_out_scale_attrs=cache_k_out_scale_attrs,
+                cache_v_out_scale_attrs=cache_v_out_scale_attrs,
+                gate_weight_attrs=gate_weight_attrs,
+                ffn1_0_weight_attrs=ffn1_0_weight_attrs,
+                ffn1_1_weight_attrs=ffn1_1_weight_attrs,
+                ffn2_weight_attrs=ffn2_weight_attrs,
+                ffn2_bias_attrs=ffn2_bias_attrs,
+                epsilon=self.epsilon,
+                norm_type="rmsnorm",
+                use_neox_rotary_style=self.use_neox,
+                rank_id=config.tensor_parallel_rank,
+                trans_qkvw=(False if paddle.is_compiled_with_rocm() and "a8w8" in self.quant_type else True),
+                moe_config=moe_config,
+            )
+        else:
+            transformer_config = FusedMultiTransformerConfig(
+                embed_dim=self.hidden_size,
+                num_heads=self.num_attention_heads,
+                kv_num_heads=self.num_key_value_heads,
+                dim_feedforward=self.intermediate_size,
+                quant_type=self.quant_type,
+                activation="swiglu",
+                num_layers=config.num_hidden_layers,
+                nranks=config.tensor_parallel_degree,
+                ring_id=ring_id,
+                ln_scale_attrs=ln_scale_attrs,
+                qkv_weight_attrs=qkv_weight_attrs,
+                qkv_weight_scale_attrs=qkv_weight_scale_attrs,
+                linear_weight_attrs=out_proj_weight_attrs,
+                linear_weight_scale_attrs=out_proj_weight_scale_attrs,
+                ffn_ln_scale_attrs=ffn_ln_scale_attrs,
+                gate_weight_attrs=gate_weight_attrs,
+                ffn1_weight_attrs=ffn1_weight_attrs,
+                ffn1_weight_scale_attrs=ffn1_weight_scale_attrs,
+                ffn2_weight_attrs=ffn2_weight_attrs,
+                ffn2_weight_scale_attrs=ffn2_weight_scale_attrs,
+                qkv_out_scale_attrs=qkv_out_scale_attrs,
+                linear_out_scale_attrs=linear_out_scale_attrs,
+                ffn1_out_scale_attrs=ffn1_out_scale_attrs,
+                ffn2_out_scale_attrs=ffn2_out_scale_attrs,
+                linear_shift_attrs=linear_shift_attrs,
+                linear_smooth_attrs=linear_smooth_attrs,
+                ffn2_shift_attrs=ffn2_shift_attrs,
+                ffn2_smooth_attrs=ffn2_smooth_attrs,
+                ln_bias_attrs=ln_bias_attrs,
+                qkv_bias_attrs=qkv_bias_attrs,
+                linear_bias_attrs=out_proj_bias_attrs,
+                ffn_ln_bias_attrs=ffn_ln_bias_attrs,
+                ffn1_bias_attrs=ffn1_bias_attrs,
+                ffn2_bias_attrs=ffn2_bias_attrs,
+                cache_k_scale_attrs=cache_k_scale_attrs,
+                cache_v_scale_attrs=cache_v_scale_attrs,
+                cache_k_out_scale_attrs=cache_k_out_scale_attrs,
+                cache_v_out_scale_attrs=cache_v_out_scale_attrs,
+                epsilon=self.epsilon,
+                norm_type="rmsnorm",
+                use_neox_rotary_style=self.use_neox,
+                cachekv_int8_type=config.cachekv_int8_type,
+                rank_id=config.tensor_parallel_rank,
+                trans_qkvw=(False if paddle.is_compiled_with_rocm() and "a8w8" in self.quant_type else True),
+                moe_config=moe_config,
+            )
 
         self.set_transformer_block(transformer_config)
         self.norm = FusedMixtralRMSNorm(config)
@@ -898,6 +949,179 @@ class MixtralInferenceModel(MixtralPretrainedModel):
                                 )
                             )
 
+    def set_state_dict_fp8(self, state_dict: dict[str, np.ndarray | paddle.Tensor], use_structured_name=True):
+        """transpose qkv shape & cast dtype for layernorm
+
+        Args:
+            state_dict (dict[str, np.ndarray | paddle.Tensor]): the state dict of model
+            use_structured_name (bool, optional): _description_. Defaults to True.
+        """
+        current_work_dir = os.path.dirname(__file__)
+        scale_map_file = f"{current_work_dir}/ptq_fp8_scales_map.json"
+        with open(scale_map_file) as json_file:
+            scale_map_dict = json.load(json_file)
+            act_scale_map_dict = scale_map_dict["act_scale"]
+            weight_scale_map_dict = scale_map_dict["weight_scale"]
+            cache_scale_map_dict = scale_map_dict["cachekv_scale"]
+            act_scale_json_path = os.path.join(self.quant_model_path, "act_scales.json")
+            weight_scale_json_path = os.path.join(self.quant_model_path, "weight_scales.json")
+            if self.config.tensor_parallel_degree > 1 and not self.config.single_card_ptq:
+                act_scale_json_path = os.path.join(
+                    self.quant_model_path, f"act_scales_{self.config.tensor_parallel_rank}.json"
+                )
+                weight_scale_json_path = os.path.join(
+                    self.quant_model_path, f"weight_scales_{self.config.tensor_parallel_rank}.json"
+                )
+
+            act_scales = ActScalesLoader(
+                act_scale_json_path, act_scale_map_dict, num_of_layers=self.config.num_hidden_layers
+            )
+            # todo: ckl117
+            # for e_id in range(self.num_experts):
+
+            weight_scales = PerTensorWeightScalesLoader(
+                weight_scale_json_path,
+                weight_scale_map_dict,
+                num_of_layers=self.config.num_hidden_layers,
+            )
+
+            # todo: ckl117
+            # for e_id in range(self.num_experts):
+
+            self.transformer_block.act_scales = act_scales
+            self.transformer_block.weight_scales = weight_scales
+
+        if self.config.cachekv_int8_type == "static":
+            cache_scale_json_path = os.path.join(self.quant_model_path, "cachekv_scales.json")
+            if self.config.tensor_parallel_degree > 1 and not self.config.single_card_ptq:
+                cache_scale_json_path = os.path.join(
+                    self.quant_model_path, f"cachekv_scales_{self.config.tensor_parallel_rank}.json"
+                )
+            cache_scales_loader = CacheScaleLoader(
+                cache_scale_json_path,
+                cache_scale_map_dict,
+                num_of_layers=self.config.num_hidden_layers,
+                num_heads=self.num_attention_heads // self.config.tensor_parallel_degree,
+                num_key_value_heads=self.num_key_value_heads // self.config.tensor_parallel_degree,
+            )
+            for k, v in cache_scales_loader.scale.items():
+                for i_layer, weight_scale in enumerate(v):
+                    weight_scale = weight_scale.astype("float32")
+                    if k == "cache_k_scale":
+                        self.transformer_block.cache_k_scales[i_layer].set_value(weight_scale)
+                    elif k == "cache_v_scale":
+                        self.transformer_block.cache_v_scales[i_layer].set_value(weight_scale)
+                    elif k == "cache_k_out_scale":
+                        self.transformer_block.cache_k_out_scales[i_layer].set_value(weight_scale)
+                    else:
+                        self.transformer_block.cache_v_out_scales[i_layer].set_value(weight_scale)
+        unfused_state_dict = {}
+        head_size = self.hidden_size // self.num_attention_heads
+        split_fn = split_param_func()
+
+        self.embed_tokens.weight.set_value(
+            paddle.to_tensor(state_dict["mixtral.embed_tokens.weight"]).cast(self.embed_tokens.weight.dtype)
+        )
+        self.norm.weight.set_value(paddle.to_tensor(state_dict["mixtral.norm.weight"]).cast(self.norm.weight.dtype))
+
+        for key in state_dict.keys():
+            state_dict[key] = paddle.to_tensor(state_dict[key])
+
+        for key in list(state_dict.keys()):
+            if "mixtral.layers" in key:
+                state_dict[key.replace("mixtral.layers", "transformer_block.fusemixtral")] = state_dict.pop(key)
+
+        for idx in range(self.config.num_hidden_layers):
+            if "transformer_block.fusemixtral.{}.self_attn.qkv_proj.weight".format(idx) in list(state_dict.keys()):
+                concated_qkv_weight = paddle.concat(
+                    split_fn(
+                        state_dict["transformer_block.fusemixtral.{}.self_attn.qkv_proj.weight".format(idx)],
+                        is_qkv=True,
+                        num_heads=self.num_attention_heads // self.config.tensor_parallel_degree,
+                        num_key_value_heads=self.num_key_value_heads // self.config.tensor_parallel_degree,
+                    ),
+                    axis=-1,
+                ).transpose([1, 0])
+            else:
+                unfused_state_dict = {}
+                q_wgt_scale = self.transformer_block.weight_scales.scale["q_weight_scale"][idx]
+                k_wgt_scale = self.transformer_block.weight_scales.scale["k_weight_scale"][idx]
+                v_wgt_scale = self.transformer_block.weight_scales.scale["v_weight_scale"][idx]
+                qkv_wgt_scale = self.transformer_block.weight_scales.scale["qkv_weight_scale"][idx]
+                unfused_state_dict["self_attn.q_proj.weight"] = (
+                    state_dict["transformer_block.fusemixtral.{}.self_attn.q_proj.weight".format(idx)].cast("float32")
+                    * q_wgt_scale
+                    / qkv_wgt_scale
+                )
+                unfused_state_dict["self_attn.k_proj.weight"] = (
+                    state_dict["transformer_block.fusemixtral.{}.self_attn.k_proj.weight".format(idx)].cast("float32")
+                    * k_wgt_scale
+                    / qkv_wgt_scale
+                )
+                unfused_state_dict["self_attn.v_proj.weight"] = (
+                    state_dict["transformer_block.fusemixtral.{}.self_attn.v_proj.weight".format(idx)].cast("float32")
+                    * v_wgt_scale
+                    / qkv_wgt_scale
+                )
+                concated_qkv_weight = (
+                    paddle.concat(
+                        [
+                            unfused_state_dict["self_attn.q_proj.weight"],
+                            unfused_state_dict["self_attn.k_proj.weight"],
+                            unfused_state_dict["self_attn.v_proj.weight"],
+                        ],
+                        axis=-1,
+                    )
+                    .transpose([1, 0])
+                    .reshape(
+                        [
+                            (
+                                self.num_attention_heads // self.config.tensor_parallel_degree
+                                + 2 * self.num_key_value_heads // self.config.tensor_parallel_degree
+                            )
+                            * (head_size),
+                            self.hidden_size,
+                        ]
+                    )
+                )
+                state_dict[
+                    "transformer_block.fusemixtral.{}.self_attn.qkv_proj.weight".format(idx)
+                ] = concated_qkv_weight
+
+        for key in list(state_dict.keys()):
+            if key.endswith(".input_layernorm.weight"):
+                state_dict[key.replace(".input_layernorm.weight", ".ln_scale")] = state_dict.pop(key).cast(
+                    self.transformer_block.ln_scales[idx].dtype
+                )
+            elif key.endswith(".post_attention_layernorm.weight"):
+                state_dict[key.replace(".post_attention_layernorm.weight", ".ffn_ln_scale")] = state_dict.pop(
+                    key
+                ).cast(self.transformer_block.ffn_ln_scales[idx].dtype)
+            elif key.endswith(".self_attn.qkv_proj.weight"):
+                state_dict[key.replace(".self_attn.qkv_proj.weight", ".qkv_weight")] = state_dict.pop(key).cast(
+                    "float8_e4m3fn"
+                )
+            elif key.endswith(".self_attn.o_proj.weight"):
+                state_dict[key.replace(".self_attn.o_proj.weight", ".out_proj_weight")] = (
+                    state_dict.pop(key).transpose([1, 0]).cast("float8_e4m3fn")
+                )
+            elif key.endswith(".mlp.gate_proj.weight"):
+                state_dict[key.replace(".mlp.gate_proj.weight", ".ffn1_0_weight")] = (
+                    state_dict.pop(key).transpose([1, 0]).cast("float8_e4m3fn")
+                )
+            elif key.endswith(".mlp.up_proj.weight"):
+                state_dict[key.replace(".mlp.up_proj.weight", ".ffn1_1_weight")] = (
+                    state_dict.pop(key).transpose([1, 0]).cast("float8_e4m3fn")
+                )
+            elif key.endswith(".mlp.down_proj.weight"):
+                state_dict[key.replace(".mlp.down_proj.weight", ".ffn2_weight")] = (
+                    state_dict.pop(key).transpose([1, 0]).cast("float8_e4m3fn")
+                )
+
+        self.set_state_dict_to_params(state_dict, True)
+
+        return self
+
 
 class MixtralForCausalLMInferenceModel(GenerationInferenceModel, MixtralPretrainedModel):
     """
@@ -1068,8 +1292,10 @@ class MixtralBlockInferenceModel(MixtralInferenceModel):
     def set_transformer_block(self, transformer_config):
         if self.use_weight_only:
             self.transformer_block = FusedBlockMultiTransformerWeightOnly(transformer_config)
-        elif "a8w8" in self.quant_type:
+        elif self.quant_type == "a8w8" or self.quant_type == "a8w8c8":
             self.transformer_block = FusedBlockMultiTransformerA8W8(transformer_config)
+        elif "fp8" in self.quant_type:
+            self.transformer_block = FusedBlockMultiTransformerFP8(transformer_config)
         else:
             self.transformer_block = FusedBlockMultiTransformer(transformer_config)
 
@@ -1338,4 +1564,7 @@ class MixtralForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, Mixtr
             self.lm_head.weight.set_value(
                 paddle.to_tensor(state_dict["lm_head.weight"]).cast(self.lm_head.weight.dtype)
             )
-        self.mixtral.set_state_dict({k: state_dict[k] for k in state_dict.keys()})
+        if "fp8" in self.mixtral.quant_type:
+            self.mixtral.set_state_dict_fp8({k: state_dict[k] for k in state_dict.keys()})
+        else:
+            self.mixtral.set_state_dict({k: state_dict[k] for k in state_dict.keys()})

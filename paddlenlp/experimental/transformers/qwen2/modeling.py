@@ -1513,7 +1513,6 @@ class Qwen2BlockInferenceModel(Qwen2InferenceModel):
         kwargs["cu_seqlens_k"] = cu_seqlens_k
         kwargs["padding_offsets"] = padding_offset
         kwargs["max_input_length"] = self.max_seq_len
-
         inputs_embeds = self.embed_tokens(ids_remove_padding)
 
         with dy2st_nocheck_guard_context():

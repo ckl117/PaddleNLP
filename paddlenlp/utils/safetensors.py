@@ -260,7 +260,7 @@ class PySafeSlice:
 
     @property
     def nelements(self):
-        return np.prod(self.info["shape"])
+        return np.prod(self.info["shape"], dtype=int)
 
     @property
     def bits(self):

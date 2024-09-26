@@ -1,0 +1,24 @@
+{
+    "act_scale":{
+        "qkv_in_scale": "mixtral.layers.#.self_attn.q_proj.activation_quanter", 
+        "out_linear_in_scale": "mixtral.layers.#.self_attn.o_proj.activation_quanter", 
+        "gate_in_scale": "mixtral.layers.#.block_sparse_moe.gate.activation_quanter",
+        "ffn1_0_in_scale": "mixtral.layers.#.block_sparse_moe.experts.&.w1.activation_quanter", 
+        "ffn1_1_in_scale": "mixtral.layers.#.block_sparse_moe.experts.&.w3.activation_quanter", 
+        "ffn2_in_scale": "mixtral.layers.#.block_sparse_moe.experts.&.w2.activation_quanter"
+    },
+    "weight_scale":{
+        "q_weight_scale":"mixtral.layers.#.self_attn.q_proj.weight_quanter",
+        "k_weight_scale":"mixtral.layers.#.self_attn.k_proj.weight_quanter",
+        "v_weight_scale":"mixtral.layers.#.self_attn.v_proj.weight_quanter",
+        "out_linear_weight_scale":"mixtral.layers.#.self_attn.o_proj.weight_quanter",
+        "gate_weight_scale":"mixtral.layers.#.block_sparse_moe.gate.weight_quanter",
+        "ffn1_0_weight_scale":"mixtral.layers.#.block_sparse_moe.experts.&.w1.weight_quanter",
+        "ffn1_1_weight_scale":"mixtral.layers.#.block_sparse_moe.experts.&.w3.weight_quanter",
+        "ffn2_weight_scale":"mixtral.layers.#.block_sparse_moe.experts.&.w2.weight_quanter"
+    },
+    "cachekv_scale":{
+        "cache_k_scale": "mixtral.layers.#.self_attn.cachek_matmul.activation_quanter",
+        "cache_v_scale": "mixtral.layers.#.self_attn.cachev_matmul.activation_quanter"
+    }
+  }
