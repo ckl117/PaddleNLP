@@ -2575,7 +2575,7 @@ class FusedAppendMultiTransformerA8W8(FusedAppendMultiTransformer, FusedMultiTra
         return out_linear_out
 
 
-class FusedBlockMultiTransformerFP8(Layer):
+class FusedMultiTransformerFP8(Layer):
     def __init__(self, config: FusedMultiTransformerConfig):
         """"""
         super().__init__()
@@ -3342,3 +3342,191 @@ class FusedBlockMultiTransformerFP8(Layer):
 
         out = self.post_process(**kwargs)
         return out, caches
+
+
+class FusedBlockMultiTransformerFP8(FusedMultiTransformerFP8):
+    def __init__(self, config: FusedMultiTransformerConfig):
+        super().__init__(config)
+    
+    def compute_attn(
+        self,
+        time_step,
+        qkv_out,
+        padding_offset,
+        seq_lens,
+        input_ids,
+        rotary_embs,
+        rotary_emb_dims,
+        caches,
+        pre_caches,
+        pre_caches_length,
+        attn_mask,
+        i,
+        **kwargs,
+    ):
+        """
+            Compute the attention for a single time step.
+        Args:
+            time_step (int): The current time step.
+            qkv_out (Tensor): The output of the linear layer.
+            padding_offset (Tensor): The padding offset tensor.
+            seq_lens (Tensor): The sequence length tensor.
+            input_ids (Tensor): The input ids tensor.
+            rotary_embs (Tensor, optional): The rotary embeddings tensor. Defaults to None.
+            rotary_emb_dims (int, optional): The rotary embedding dimension. Defaults to None.
+            caches (List[Tensor], optional): The cache list. Defaults to None.
+            pre_caches (List[Tensor], optional): The pre-cache list. Defaults to None.
+            pre_caches_length (int, optional): The pre-cache length. Defaults to None.
+            attn_mask (Tensor, optional): The attention mask tensor. Defaults to None.
+            i (int, optional): The index of the block. Defaults to None.
+            **kwargs (dict, optional): Additional keyword arguments. Defaults to {}.
+        Returns:
+            Tensor: The output linear layer output.
+        Raises:
+            None.
+        """
+        k_quant_scales = kwargs.get("k_quant_scales", None)
+        v_quant_scales = kwargs.get("v_quant_scales", None)
+        k_dequant_scales = kwargs.get("k_dequant_scales", None)
+        v_dequant_scales = kwargs.get("v_dequant_scales", None)
+        
+
+        if not self.config.use_dynamic_cachekv_quant:
+            k_quant_scales = self.cache_k_scales
+            v_quant_scales = self.cache_v_scales
+            k_dequant_scales = self.cache_k_out_scales
+            v_dequant_scales = self.cache_v_out_scales
+
+        fmha_out = paddle.incubate.nn.functional.block_multihead_attention(
+            qkv_out,
+            caches[2 * i],
+            caches[2 * i + 1],
+            kwargs.get("seq_lens_encoder", None),
+            kwargs.get("seq_lens_decoder", None),
+            kwargs.get("seq_lens_this_time", None),
+            kwargs.get("padding_offsets", None),
+            kwargs.get("cum_offsets", None),
+            kwargs.get("cu_seqlens_q", None),
+            kwargs.get("cu_seqlens_k", None),
+            kwargs.get("block_tables", None),
+            pre_caches[2 * i] if pre_caches is not None else None,  # pre_key_cache
+            pre_caches[2 * i + 1] if pre_caches is not None else None,  # pre_value_cache
+            k_quant_scales[i] if k_quant_scales is not None else None,
+            v_quant_scales[i] if v_quant_scales is not None else None,
+            k_dequant_scales[i] if k_dequant_scales is not None else None,
+            v_dequant_scales[i] if v_dequant_scales is not None else None,
+            None,  # qkv_out_scales
+            None,  # qkv_bias
+            None,  # out_shifts
+            None,  # out_smooths
+            kwargs.get("max_enc_len_this_time", None),
+            kwargs.get("max_dec_len_this_time", None),
+            rotary_embs,
+            attn_mask,
+            kwargs.get("tgt_mask", None),  # tgt_mask
+            kwargs.get("max_input_length", -1),
+            kwargs.get("block_size", 64),
+            self.use_neox_rotary_style,
+            self.config.use_dynamic_cachekv_quant,
+            quant_round_type=self.config.quant_round_type,
+            quant_max_bound=self.config.quant_max_bound,
+            quant_min_bound=self.config.quant_min_bound,
+            out_scale=self.act_scales.scale["out_linear_in_scale"][i],
+        )[0]
+        out_linear_out = self.compute_out_linear(fmha_out, i)
+
+        return out_linear_out
+
+class FusedAppendMultiTransformerFP8(FusedMultiTransformerFP8):
+    def __init__(self, config: FusedMultiTransformerConfig):
+        super().__init__(config)
+
+    def compute_attn(
+        self,
+        time_step,
+        qkv,
+        padding_offset,
+        seq_lens,
+        input_ids,
+        rotary_embs,
+        rotary_emb_dims,
+        caches,
+        pre_caches,
+        pre_caches_length,
+        attn_mask,
+        i,
+        **kwargs,
+    ):
+        k_quant_scales = kwargs.get("k_quant_scales", None)
+        v_quant_scales = kwargs.get("v_quant_scales", None)
+        k_dequant_scales = kwargs.get("k_dequant_scales", None)
+        v_dequant_scales = kwargs.get("v_dequant_scales", None)
+        cache_k_zps = kwargs.get("cache_k_zp", None)
+        cache_v_zps = kwargs.get("cache_v_zp", None)
+
+        cache_quant_type_str = "none"
+        if not self.config.use_dynamic_cachekv_quant:
+            k_quant_scales = self.cache_k_scales
+            v_quant_scales = self.cache_v_scales
+            k_dequant_scales = self.cache_k_out_scales
+            v_dequant_scales = self.cache_v_out_scales
+            cache_quant_type_str = "cache_int8"
+
+        k_quant_scale = k_quant_scales[i] if k_quant_scales is not None else None
+        v_quant_scale = v_quant_scales[i] if v_quant_scales is not None else None
+        k_dequant_scale = k_dequant_scales[i] if k_dequant_scales is not None else None
+        v_dequant_scale = v_dequant_scales[i] if v_dequant_scales is not None else None
+        cache_k_zp = cache_k_zps[i] if cache_k_zps is not None else None
+        cache_v_zp = cache_v_zps[i] if cache_v_zps is not None else None
+
+        from paddlenlp_ops import append_attention
+
+        fmha_out = append_attention(
+            qkv,
+            caches[2 * i],
+            caches[2 * i + 1],
+            kwargs.get("seq_lens_encoder", None),
+            kwargs.get("seq_lens_decoder", None),
+            kwargs.get("seq_lens_this_time", None),
+            kwargs.get("padding_offsets", None),
+            kwargs.get("cum_offsets", None),
+            kwargs.get("block_tables", None),
+            kwargs.get("encoder_batch_ids", None),
+            kwargs.get("encoder_tile_ids_per_batch", None),
+            kwargs.get("encoder_num_blocks", None),
+            kwargs.get("kv_batch_ids", None),
+            kwargs.get("kv_tile_ids_per_batch", None),
+            kwargs.get("kv_num_blocks", None),
+            kwargs.get("decoder_batch_ids", None),
+            kwargs.get("decoder_tile_ids_per_batch", None),
+            kwargs.get("decoder_num_blocks", None),
+            kwargs.get("max_enc_len_this_time", None),
+            kwargs.get("max_dec_len_this_time", None),
+            rotary_embs,
+            None,  # attn_mask
+            None,  # qkv_bias
+            None,  # qkv_out_scales
+            k_quant_scale,
+            v_quant_scale,
+            k_dequant_scale,
+            v_dequant_scale,
+            cache_k_zp,
+            cache_v_zp,
+            self.linear_shifts[i] if len(self.linear_shifts) > 0 else None,
+            self.linear_smooths[i] if len(self.linear_smooths) > 0 else None,
+            self._fuse_kernel_compute_dtype,
+            cache_quant_type_str,
+            self.use_neox_rotary_style,
+            kwargs.get("max_input_length", -1),
+            self.act_scales["out_linear_in_scale"][i],
+            kwargs.get("encoder_block_shape_q", 64),
+            kwargs.get("decoder_block_shape_q", 16),
+            kwargs.get("max_partition_size", 32768),
+            kwargs.get("encoder_max_partition_size", 32768),
+            5,  # speculate_max_draft_token_num
+            True,  # causal
+            True,  # enable_prefill
+        )[0]
+        out_linear_out = self.compute_out_linear(fmha_out, i)
+
+        return out_linear_out

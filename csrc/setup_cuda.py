@@ -153,6 +153,10 @@ if cc >= 80:
     sources += ["gpu/int8_gemm_with_cutlass/gemm_dequant.cu"]
 
 if cc >= 89:
+    # Running generate fp8 gemm codes.
+    os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py")
+    os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
+    
     sources += find_end_files("gpu/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
     sources += [
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
