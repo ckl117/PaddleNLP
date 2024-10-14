@@ -47,6 +47,11 @@ struct cascade_attn_type_traits<phi::dtype::float16> {
   using type = half;
 };
 
+template<>
+struct cascade_attn_type_traits<phi::dtype::float8_e4m3fn> {
+  using type = __nv_fp8_e4m3;
+};
+
 template<typename T>
 struct cascade_attn_nv_type2_traits {
   using type = T;

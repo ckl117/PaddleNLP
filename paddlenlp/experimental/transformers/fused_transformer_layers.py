@@ -2561,6 +2561,8 @@ class FusedAppendMultiTransformerA8W8(FusedAppendMultiTransformer, FusedMultiTra
             cache_quant_type_str,
             self.use_neox_rotary_style,
             kwargs.get("max_input_length", -1),
+            127,
+            -127,
             self.act_scales["out_linear_in_scale"][i],
             kwargs.get("encoder_block_shape_q", 64),
             kwargs.get("decoder_block_shape_q", 16),
@@ -2593,6 +2595,18 @@ class FusedMultiTransformerFP8(Layer):
 
         # self.normalize_before = normalize_before
         self._dtype = self._helper.get_default_dtype()
+        if self._dtype == "bfloat16":
+            self._fuse_kernel_compute_dtype = "bf16"
+        elif self._dtype == "float16":
+            self._fuse_kernel_compute_dtype = "fp16"
+        elif self._dtype == "float32":
+            self._fuse_kernel_compute_dtype = "fp32"
+        else:
+            raise ValueError(
+                "FusedMultiTransformerFP8 just support float32, float16 and bfloat16 as default dtype, but received {}".format(
+                    self._dtype
+                )
+            )
         self._epsilon = config.epsilon
         self._residual_alpha = config.residual_alpha
         self.nranks = config.nranks
@@ -3293,6 +3307,36 @@ class FusedMultiTransformerFP8(Layer):
         kwargs["max_enc_len_this_time"] = max_enc_len_this_time
         kwargs["max_dec_len_this_time"] = max_dec_len_this_time
 
+        if self.config.append_attn:
+            kwargs["encoder_block_shape_q"] = 64
+            kwargs["decoder_block_shape_q"] = 16
+            kwargs["max_partition_size"] = 32768
+            kwargs["encoder_max_partition_size"] = 32768
+
+            from paddlenlp_ops import get_block_shape_and_split_kv_block
+
+            (
+                kwargs["encoder_batch_ids"],
+                kwargs["encoder_tile_ids_per_batch"],
+                kwargs["encoder_num_blocks"],
+                kwargs["kv_batch_ids"],
+                kwargs["kv_tile_ids_per_batch"],
+                kwargs["kv_num_blocks"],
+                kwargs["decoder_batch_ids"],
+                kwargs["decoder_tile_ids_per_batch"],
+                kwargs["decoder_num_blocks"],
+            ) = get_block_shape_and_split_kv_block(
+                kwargs.get("seq_lens_encoder", None),
+                kwargs.get("seq_lens_decoder", None),
+                max_enc_len_this_time,
+                kwargs.get("seq_lens_this_time", None),
+                kwargs.get("cum_offsets", None),
+                kwargs.get("encoder_block_shape_q", 64),
+                kwargs.get("decoder_block_shape_q", 16),
+                self.num_heads // self.kv_num_heads,
+                kwargs.get("block_size", 64),
+            )
+
         residual_input = src
         for i in range(self.num_layers):
             qkv_out, residual_input = self.compute_qkv(src, residual_input, i)
@@ -3480,7 +3524,51 @@ class FusedAppendMultiTransformerFP8(FusedMultiTransformerFP8):
         cache_v_zp = cache_v_zps[i] if cache_v_zps is not None else None
 
         from paddlenlp_ops import append_attention
-
+        # print(f'===========')
+        # print(f'qkv.shape = {qkv.shape}')
+        # print(f'caches[2 * i].shape = {caches[2 * i].shape}')
+        # print(caches[2 * i + 1])
+        # print(f'seq_lens_encoder = {kwargs.get("seq_lens_encoder", None)}')
+        # print(f'seq_lens_decoder = {kwargs.get("seq_lens_decoder", None)}')
+        # print(f'seq_lens_this_time = {kwargs.get("seq_lens_this_time", None)}')
+        # print(f'padding_offsets = {kwargs.get("padding_offsets", None)}')
+        # print(f'cum_offsets = {kwargs.get("cum_offsets", None)}')
+        # print(f'block_tables = {kwargs.get("block_tables", None)}')
+        # print(f'encoder_batch_ids = {kwargs.get("encoder_batch_ids", None)}')
+        # print(f'encoder_tile_ids_per_batch = {kwargs.get("encoder_tile_ids_per_batch", None)}')
+        # print(f'encoder_num_blocks = {kwargs.get("encoder_num_blocks", None)}')
+        # print(f'kv_batch_ids = {kwargs.get("kv_batch_ids", None)}')
+        # print(f'kv_tile_ids_per_batch = {kwargs.get("kv_tile_ids_per_batch", None)}')
+        # print(f'kv_num_blocks = {kwargs.get("kv_num_blocks", None)}')
+        # print(f'decoder_batch_ids = {kwargs.get("decoder_batch_ids", None)}')
+        # print(f'decoder_tile_ids_per_batch = {kwargs.get("decoder_tile_ids_per_batch", None)}')
+        # print(f'decoder_num_blocks = {kwargs.get("decoder_num_blocks", None)}')
+        # print(f'max_enc_len_this_time = {kwargs.get("max_enc_len_this_time", None)}')
+        # print(f'max_dec_len_this_time = {kwargs.get("max_dec_len_this_time", None)}')
+        # print(f'rotary_embs = {rotary_embs}')
+        # # None,  # attn_mask
+        # # None,  # qkv_bias
+        # # None,  # qkv_out_scales
+        # print(f'k_quant_scale = {k_quant_scale}')
+        # print(f'v_quant_scale = {v_quant_scale}')
+        # print(f'k_dequant_scale = {k_dequant_scale}')
+        # print(f'v_dequant_scale = {v_dequant_scale}')
+        # print(f'cache_k_zp = {cache_k_zp}')
+        # print(f'cache_v_zp = {cache_v_zp}')
+        # # None,  # linear_shifts
+        # # None,  # linear_smooths
+        # print(f'self._fuse_kernel_compute_dtype = {self._fuse_kernel_compute_dtype}')
+        # print(f'cache_quant_type_str = {cache_quant_type_str}')
+        # print(f'self.use_neox_rotary_style = {self.use_neox_rotary_style}')
+        # print(f'max_input_length = {kwargs.get("max_input_length", -1)}')
+        # print(448)
+        # print(-448)
+        # print(f'out_linear_in_scale = {self.act_scales.scale["out_linear_in_scale"][i]}')
+        # print(f'encoder_block_shape_q = {kwargs.get("encoder_block_shape_q", 64)}')
+        # print(f'decoder_block_shape_q = {kwargs.get("decoder_block_shape_q", 16)}')
+        # print(f'max_partition_size = {kwargs.get("max_partition_size", 32768)}')
+        # print(f'encoder_max_partition_size = {kwargs.get("encoder_max_partition_size", 32768)}')
+        # exit(0)
         fmha_out = append_attention(
             qkv,
             caches[2 * i],
@@ -3512,13 +3600,15 @@ class FusedAppendMultiTransformerFP8(FusedMultiTransformerFP8):
             v_dequant_scale,
             cache_k_zp,
             cache_v_zp,
-            self.linear_shifts[i] if len(self.linear_shifts) > 0 else None,
-            self.linear_smooths[i] if len(self.linear_smooths) > 0 else None,
+            None,  # linear_shifts
+            None,  # linear_smooths
             self._fuse_kernel_compute_dtype,
             cache_quant_type_str,
             self.use_neox_rotary_style,
             kwargs.get("max_input_length", -1),
-            self.act_scales["out_linear_in_scale"][i],
+            448,
+            -448,
+            self.act_scales.scale["out_linear_in_scale"][i],
             kwargs.get("encoder_block_shape_q", 64),
             kwargs.get("decoder_block_shape_q", 16),
             kwargs.get("max_partition_size", 32768),

@@ -110,6 +110,7 @@ sources = [
     "./gpu/append_attention.cu",
     "./gpu/append_attn/get_block_shape_and_split_kv_block.cu",
     "./gpu/append_attn/append_attention_bfloat16_bfloat16_kernel.cu",
+    "./gpu/append_attn/append_attention_bfloat16_fp8_kernel.cu",
     "./gpu/append_attn/append_attention_bfloat16_int8_kernel.cu",
     "./gpu/append_attn/encoder_write_cache_with_rope_bfloat16_bfloat16_kernel.cu",
     "./gpu/append_attn/encoder_write_cache_with_rope_bfloat16_int_kernel.cu",
@@ -154,8 +155,8 @@ if cc >= 80:
 
 if cc >= 89:
     # Running generate fp8 gemm codes.
-    os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py")
-    os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
+    # os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py")
+    # os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
     
     sources += find_end_files("gpu/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
     sources += [

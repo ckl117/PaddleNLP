@@ -40,6 +40,8 @@ template void CascadeAppendAttentionKernel<paddle::bfloat16, paddle::bfloat16>(
     const int num_heads,
     const int kv_num_heads,
     const int head_dim,
+    const float quant_max_bound,
+    const float quant_min_bound,
     const float in_scale,
     const int max_partition_size,
     const int encoder_max_partition_size,

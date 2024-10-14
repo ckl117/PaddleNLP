@@ -13,7 +13,7 @@
 // limitations under the License.
 #include "append_attention_kernel.h"
 
-template void CascadeAppendAttentionKernel<paddle::bfloat16, int8_t>(
+template void CascadeAppendAttentionKernel<paddle::bfloat16, paddle::float8_e4m3fn>(
     const paddle::Tensor& qkv,  // [token_num, num_heads, head_dim]
     const paddle::Tensor& cache_k,  // [max_block_num, num_heads, block_size, head_dim]
     const paddle::Tensor& cache_v,  // [max_block_num, num_heads, head_dim, block_size]
