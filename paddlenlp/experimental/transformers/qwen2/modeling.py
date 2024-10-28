@@ -152,6 +152,35 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
         except:
             pass
 
+        qkv_weight_scale_attrs = None
+        out_proj_weight_scale_attrs = None
+        ffn1_weight_scale_attrs = None
+        ffn2_weight_scale_attrs = None
+
+        qkv_out_scale_attrs = None
+        linear_out_scale_attrs = None
+        ffn1_out_scale_attrs = None
+        ffn2_out_scale_attrs = None
+        linear_shift_attrs = None
+        linear_smooth_attrs = None
+        ffn2_shift_attrs = None
+        ffn2_smooth_attrs = None
+
+        ln_bias_attrs = None
+        qkv_bias_attrs = None
+        out_proj_bias_attrs = None
+        ffn_ln_bias_attrs = None
+        ffn1_bias_attrs = None
+        ffn2_bias_attrs = None
+
+        ffn1_0_weight_attrs = None
+        ffn1_1_weight_attrs = None
+        ffn1_0_bias_attrs = None
+        ffn1_1_bias_attrs = None
+
+        ffn1_weight_attrs = None
+        ffn2_weight_attrs = None
+
         ln_scale_attrs = [paddle.ParamAttr(name="fuseqwen2.{}.ln_scale".format(i)) for i in range(self.num_layers)]
         qkv_weight_attrs = [
             paddle.ParamAttr(
@@ -182,8 +211,6 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
                 )
                 for i in range(self.num_layers)
             ]
-            ffn1_0_bias_attrs = None
-            ffn1_1_bias_attrs = None
         else:
             ffn1_weight_attrs = [
                 paddle.ParamAttr(
@@ -197,26 +224,6 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
             )
             for i in range(self.num_layers)
         ]
-
-        qkv_weight_scale_attrs = None
-        out_proj_weight_scale_attrs = None
-        ffn1_weight_scale_attrs = None
-        ffn2_weight_scale_attrs = None
-
-        qkv_out_scale_attrs = None
-        linear_out_scale_attrs = None
-        ffn1_out_scale_attrs = None
-        ffn2_out_scale_attrs = None
-        linear_shift_attrs = None
-        linear_smooth_attrs = None
-        ffn2_shift_attrs = None
-        ffn2_smooth_attrs = None
-
-        ln_bias_attrs = None
-        out_proj_bias_attrs = None
-        ffn_ln_bias_attrs = None
-        ffn1_bias_attrs = None
-        ffn2_bias_attrs = None
 
         if "a8w8" in self.quant_type:
             qkv_out_scale_attrs = [
@@ -304,89 +311,56 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
                 paddle.ParamAttr(name="fuseqwen2.{}.cache_v_out_scale".format(i)) for i in range(self.num_layers)
             ]
 
-        if "fp8" in self.quant_type:
-            transformer_config = FusedMultiTransformerConfig(
-                embed_dim=self.hidden_size,
-                num_heads=self.num_attention_heads,
-                kv_num_heads=self.num_key_value_heads,
-                dim_feedforward=self.intermediate_size,
-                quant_type=self.quant_type,
-                activation="swiglu",
-                num_layers=config.num_hidden_layers,
-                nranks=config.tensor_parallel_degree,
-                ring_id=ring_id,
-                ln_scale_attrs=ln_scale_attrs,
-                ln_bias_attrs=ln_bias_attrs,
-                qkv_weight_attrs=qkv_weight_attrs,
-                qkv_bias_attrs=qkv_bias_attrs,
-                linear_weight_attrs=out_proj_weight_attrs,
-                linear_bias_attrs=out_proj_bias_attrs,
-                ffn_ln_scale_attrs=ffn_ln_scale_attrs,
-                ffn_ln_bias_attrs=ffn_ln_bias_attrs,
-                cache_k_scale_attrs=cache_k_scale_attrs,
-                cache_v_scale_attrs=cache_v_scale_attrs,
-                cache_k_out_scale_attrs=cache_k_out_scale_attrs,
-                cache_v_out_scale_attrs=cache_v_out_scale_attrs,
-                ffn1_0_weight_attrs=ffn1_0_weight_attrs,
-                ffn1_1_weight_attrs=ffn1_1_weight_attrs,
-                ffn1_0_bias_attrs=ffn1_0_bias_attrs,
-                ffn1_1_bias_attrs=ffn1_1_bias_attrs,
-                ffn2_weight_attrs=ffn2_weight_attrs,
-                ffn2_bias_attrs=ffn2_bias_attrs,
-                epsilon=self.rms_norm_eps,
-                norm_type="rmsnorm",
-                use_neox_rotary_style=self.use_neox,
-                rank_id=config.tensor_parallel_rank,
-                append_attn=config.append_attn,
-            )
-
-        else:
-            transformer_config = FusedMultiTransformerConfig(
-                embed_dim=self.hidden_size,
-                num_heads=self.num_attention_heads,
-                kv_num_heads=self.num_key_value_heads,
-                dim_feedforward=self.intermediate_size,
-                quant_type=self.quant_type,
-                activation="swiglu",
-                num_layers=config.num_hidden_layers,
-                nranks=config.tensor_parallel_degree,
-                ring_id=ring_id,
-                ln_scale_attrs=ln_scale_attrs,
-                qkv_weight_attrs=qkv_weight_attrs,
-                qkv_weight_scale_attrs=qkv_weight_scale_attrs,
-                linear_weight_attrs=out_proj_weight_attrs,
-                linear_weight_scale_attrs=out_proj_weight_scale_attrs,
-                ffn_ln_scale_attrs=ffn_ln_scale_attrs,
-                ffn1_weight_attrs=ffn1_weight_attrs,
-                ffn1_weight_scale_attrs=ffn1_weight_scale_attrs,
-                ffn2_weight_attrs=ffn2_weight_attrs,
-                ffn2_weight_scale_attrs=ffn2_weight_scale_attrs,
-                qkv_out_scale_attrs=qkv_out_scale_attrs,
-                linear_out_scale_attrs=linear_out_scale_attrs,
-                ffn1_out_scale_attrs=ffn1_out_scale_attrs,
-                ffn2_out_scale_attrs=ffn2_out_scale_attrs,
-                linear_shift_attrs=linear_shift_attrs,
-                linear_smooth_attrs=linear_smooth_attrs,
-                ffn2_shift_attrs=ffn2_shift_attrs,
-                ffn2_smooth_attrs=ffn2_smooth_attrs,
-                ln_bias_attrs=ln_bias_attrs,
-                qkv_bias_attrs=qkv_bias_attrs,
-                linear_bias_attrs=out_proj_bias_attrs,
-                ffn_ln_bias_attrs=ffn_ln_bias_attrs,
-                ffn1_bias_attrs=ffn1_bias_attrs,
-                ffn2_bias_attrs=ffn2_bias_attrs,
-                cache_k_scale_attrs=cache_k_scale_attrs,
-                cache_v_scale_attrs=cache_v_scale_attrs,
-                cache_k_out_scale_attrs=cache_k_out_scale_attrs,
-                cache_v_out_scale_attrs=cache_v_out_scale_attrs,
-                epsilon=self.rms_norm_eps,
-                norm_type="rmsnorm",
-                use_neox_rotary_style=self.use_neox,
-                cachekv_int8_type=config.cachekv_int8_type,
-                rank_id=config.tensor_parallel_rank,
-                trans_qkvw=(False if paddle.is_compiled_with_rocm() and "a8w8" in self.quant_type else True),
-                append_attn=config.append_attn,
-            )
+        transformer_config = FusedMultiTransformerConfig(
+            embed_dim=self.hidden_size,
+            num_heads=self.num_attention_heads,
+            kv_num_heads=self.num_key_value_heads,
+            dim_feedforward=self.intermediate_size,
+            quant_type=self.quant_type,
+            activation="swiglu",
+            num_layers=config.num_hidden_layers,
+            nranks=config.tensor_parallel_degree,
+            ring_id=ring_id,
+            ln_scale_attrs=ln_scale_attrs,
+            qkv_weight_attrs=qkv_weight_attrs,
+            qkv_weight_scale_attrs=qkv_weight_scale_attrs,
+            linear_weight_attrs=out_proj_weight_attrs,
+            linear_weight_scale_attrs=out_proj_weight_scale_attrs,
+            ffn_ln_scale_attrs=ffn_ln_scale_attrs,
+            ffn1_weight_attrs=ffn1_weight_attrs,
+            ffn1_weight_scale_attrs=ffn1_weight_scale_attrs,
+            ffn1_0_weight_attrs=ffn1_0_weight_attrs,
+            ffn1_1_weight_attrs=ffn1_1_weight_attrs,
+            ffn2_weight_attrs=ffn2_weight_attrs,
+            ffn2_weight_scale_attrs=ffn2_weight_scale_attrs,
+            qkv_out_scale_attrs=qkv_out_scale_attrs,
+            linear_out_scale_attrs=linear_out_scale_attrs,
+            ffn1_out_scale_attrs=ffn1_out_scale_attrs,
+            ffn2_out_scale_attrs=ffn2_out_scale_attrs,
+            linear_shift_attrs=linear_shift_attrs,
+            linear_smooth_attrs=linear_smooth_attrs,
+            ffn2_shift_attrs=ffn2_shift_attrs,
+            ffn2_smooth_attrs=ffn2_smooth_attrs,
+            ln_bias_attrs=ln_bias_attrs,
+            qkv_bias_attrs=qkv_bias_attrs,
+            linear_bias_attrs=out_proj_bias_attrs,
+            ffn_ln_bias_attrs=ffn_ln_bias_attrs,
+            ffn1_bias_attrs=ffn1_bias_attrs,
+            ffn1_0_bias_attrs=ffn1_0_bias_attrs,
+            ffn1_1_bias_attrs=ffn1_1_bias_attrs,
+            ffn2_bias_attrs=ffn2_bias_attrs,
+            cache_k_scale_attrs=cache_k_scale_attrs,
+            cache_v_scale_attrs=cache_v_scale_attrs,
+            cache_k_out_scale_attrs=cache_k_out_scale_attrs,
+            cache_v_out_scale_attrs=cache_v_out_scale_attrs,
+            epsilon=self.rms_norm_eps,
+            norm_type="rmsnorm",
+            use_neox_rotary_style=self.use_neox,
+            cachekv_int8_type=config.cachekv_int8_type,
+            rank_id=config.tensor_parallel_rank,
+            trans_qkvw=(False if paddle.is_compiled_with_rocm() and "a8w8" in self.quant_type else True),
+            append_attn=config.append_attn,
+        )
 
         self.set_transformer_block(transformer_config)
 
@@ -941,9 +915,11 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
                 weight_scales.scale[weight_name] = weight_scales.scale[weight_name].astype(np.float32)
             for act_name in act_scales.scale:
                 act_scales.scale[act_name] = act_scales.scale[act_name].astype(np.float32)
-            self.transformer_block.act_scales = act_scales
-            self.transformer_block.weight_scales = weight_scales
 
+            self.transformer_block.weight_scales = weight_scales.scale
+            self.transformer_block.act_scales = act_scales.scale
+
+        self.transformer_block.init_weight()
         unfused_state_dict = {}
         head_size = self.hidden_size // self.num_attention_heads
         split_fn = split_param_func()
@@ -1003,10 +979,10 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
                 ).transpose([1, 0])
             else:
                 unfused_state_dict = {}
-                q_wgt_scale = self.transformer_block.weight_scales.scale["q_weight_scale"][idx]
-                k_wgt_scale = self.transformer_block.weight_scales.scale["k_weight_scale"][idx]
-                v_wgt_scale = self.transformer_block.weight_scales.scale["v_weight_scale"][idx]
-                qkv_wgt_scale = self.transformer_block.weight_scales.scale["qkv_weight_scale"][idx]
+                q_wgt_scale = self.transformer_block.weight_scales["q_weight_scale"][idx]
+                k_wgt_scale = self.transformer_block.weight_scales["k_weight_scale"][idx]
+                v_wgt_scale = self.transformer_block.weight_scales["v_weight_scale"][idx]
+                qkv_wgt_scale = self.transformer_block.weight_scales["qkv_weight_scale"][idx]
                 unfused_state_dict["self_attn.q_proj.weight"] = (
                     state_dict["transformer_block.fuseqwen2.{}.self_attn.q_proj.weight".format(idx)].cast("float32")
                     * q_wgt_scale

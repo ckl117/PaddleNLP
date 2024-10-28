@@ -220,7 +220,6 @@ std::vector<paddle::Tensor> AppendAttentionKernel(
           break;
         }
         case paddle::DataType::FLOAT8_E4M3FN:{
-#if (__CUDA_ARCH__ >= 890)
           CascadeAppendAttentionKernel<data_t, phi::dtype::float8_e4m3fn>(
           meta_data,
           qkv_out,
@@ -257,9 +256,6 @@ std::vector<paddle::Tensor> AppendAttentionKernel(
           true,
           main_stream,
           &fmha_out);
-#else
-          PD_THROW("Only Ada(sm_89) and higher support fp8.");
-#endif
           break;
         }
         default:{
@@ -453,7 +449,6 @@ std::vector<paddle::Tensor> AppendAttentionKernel(
           break;
         }
         case paddle::DataType::FLOAT8_E4M3FN:{
-#if (__CUDA_ARCH__ >= 890)
           CascadeAppendAttentionKernel<data_t, phi::dtype::float8_e4m3fn>(
           meta_data,
           qkv_out,
@@ -489,9 +484,6 @@ std::vector<paddle::Tensor> AppendAttentionKernel(
           !speculate_decoder,
           exec_stream,
           &fmha_out);
-#else
-          PD_THROW("Only Ada(sm_89) and higher support fp8.");
-#endif
           break;
         }
         default:{
