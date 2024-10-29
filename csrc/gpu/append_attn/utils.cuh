@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cuda_bf16.h>
+#include <cuda_fp8.h>
 #include <cuda_runtime.h>
 #include "mem_util.cuh"
 
