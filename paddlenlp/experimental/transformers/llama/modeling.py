@@ -214,6 +214,7 @@ class LlamaAvxInferenceModel(LlamaPretrainedModel):
             ffn2_bias_attrs=None,
             norm_type="rmsnorm",
             epsilon=self.epsilon,
+            rope_theta=self.rope_theta,
             nranks=config.tensor_parallel_degree,
             avx_config=avx_config,
         )
@@ -291,7 +292,6 @@ class LlamaAvxInferenceModel(LlamaPretrainedModel):
     @paddle.no_grad()
     # avx
     def set_state_dict(self, state_dict):
-        self.transformer_block.init_weight()
         unfused_state_dict = {}
         head_size = self.hidden_size // self.num_attention_heads
         split_fn = split_param_func()
