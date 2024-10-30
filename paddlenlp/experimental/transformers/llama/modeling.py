@@ -1085,8 +1085,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 self.transformer_block.qkv_weights[idx].set_value(qkv_quanted_weight_tensor)
                 self.transformer_block.qkv_weights_scale[idx].set_value(qkv_weight_scale_tensor)
             elif "fp8" in self.quant_type:
-                self.transformer_block.qkv_weights[idx].set_value(paddle.cast(concated_qkv_weight, "float8_e4m3fn"))
-                self.transformer_block.qkv_weights[idx] = self.transformer_block.qkv_weights[idx].view("float8_e4m3fn")
+                self.transformer_block.qkv_weights[idx].copy_(paddle.cast(concated_qkv_weight, "float8_e4m3fn"), False)
             elif "a8w8" in self.quant_type and not self.transformer_block.skip_quant("qkv_weight_scale", idx):
                 self.transformer_block.qkv_weights[idx].set_value(
                     paddle.cast(paddle.to_tensor(concated_qkv_weight), "int8")
@@ -1104,16 +1103,14 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 self.transformer_block.linear_weights[idx].set_value(linear_quanted_weight_tensor)
                 self.transformer_block.linear_weights_scale[idx].set_value(linear_weight_scale_tensor)
             elif "fp8" in self.quant_type:
-                self.transformer_block.linear_weights[idx].set_value(
+                self.transformer_block.linear_weights[idx].copy_(
                     paddle.cast(
                         paddle.to_tensor(state_dict["llama.layers.{}.self_attn.o_proj.weight".format(idx)]).transpose(
                             (1, 0)
                         ),
                         "float8_e4m3fn",
-                    )
-                )
-                self.transformer_block.linear_weights[idx] = self.transformer_block.linear_weights[idx].view(
-                    "float8_e4m3fn"
+                    ),
+                    False,
                 )
             elif "a8w8" in self.quant_type:
                 w_dtype = (
@@ -1167,19 +1164,15 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 self.transformer_block.ffn1_weights[idx].set_value(ffn1_quanted_weight_tensor)
                 self.transformer_block.ffn1_weights_scale[idx].set_value(ffn1_weight_scale_tensor)
             elif "fp8" in self.quant_type:
-                self.transformer_block.ffn1_0_weights[idx].set_value(
+                self.transformer_block.ffn1_0_weights[idx].copy_(
                     paddle.to_tensor(unfused_state_dict["mlp.gate_proj.weight"])
                     .transpose((1, 0))
-                    .cast("float8_e4m3fn")
+                    .cast("float8_e4m3fn"),
+                    False,
                 )
-                self.transformer_block.ffn1_1_weights[idx].set_value(
-                    paddle.to_tensor(unfused_state_dict["mlp.up_proj.weight"]).transpose((1, 0)).cast("float8_e4m3fn")
-                )
-                self.transformer_block.ffn1_0_weights[idx] = self.transformer_block.ffn1_0_weights[idx].view(
-                    "float8_e4m3fn"
-                )
-                self.transformer_block.ffn1_1_weights[idx] = self.transformer_block.ffn1_1_weights[idx].view(
-                    "float8_e4m3fn"
+                self.transformer_block.ffn1_1_weights[idx].copy_(
+                    paddle.to_tensor(unfused_state_dict["mlp.up_proj.weight"]).transpose((1, 0)).cast("float8_e4m3fn"),
+                    False,
                 )
             elif "a8w8" in self.quant_type:
                 w_dtype = (
@@ -1208,13 +1201,11 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 self.transformer_block.ffn2_weights[idx].set_value(ffn2_quanted_weight_tensor)
                 self.transformer_block.ffn2_weights_scale[idx].set_value(ffn2_weight_scale_tensor)
             elif "fp8" in self.quant_type:
-                self.transformer_block.ffn2_weights[idx].set_value(
+                self.transformer_block.ffn2_weights[idx].copy_(
                     paddle.to_tensor(state_dict["llama.layers.{}.mlp.down_proj.weight".format(idx)])
                     .transpose([1, 0])
-                    .cast("float8_e4m3fn")
-                )
-                self.transformer_block.ffn2_weights[idx] = self.transformer_block.ffn2_weights[idx].view(
-                    "float8_e4m3fn"
+                    .cast("float8_e4m3fn"),
+                    False,
                 )
             elif "a8w8" in self.quant_type:
                 w_dtype = (
