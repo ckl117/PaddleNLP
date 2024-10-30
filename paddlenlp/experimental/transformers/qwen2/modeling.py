@@ -560,7 +560,7 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
 
         for idx in range(self.num_layers):
             logger.info(f"set state for layer {idx}")
-            unfused_state_dict = {}
+
             ln_scale = paddle.to_tensor(state_dict["qwen2.layers.{}.input_layernorm.weight".format(idx)]).cast(
                 self.transformer_block.ln_scales[idx].dtype
             )
@@ -797,7 +797,11 @@ class Qwen2InferenceModel(Qwen2PretrainedModel):
                 self.transformer_block.ffn2_weights[idx].set_value(ffn2_quanted_weight)
                 self.transformer_block.ffn2_weights_scale[idx].set_value(ffn2_weight_scale)
             elif "fp8" in self.quant_type:
-                self.transformer_block.ffn2_weights[idx].set_value(ffn2_weight.transpose([1, 0]).cast("float8_e4m3fn"))
+                self.transformer_block.ffn2_weights[idx].set_value(
+                    paddle.to_tensor(state_dict["qwen2.layers.{}.mlp.down_proj.weight".format(idx)])
+                    .transpose([1, 0])
+                    .cast("float8_e4m3fn")
+                )
                 self.transformer_block.ffn2_weights[idx] = self.transformer_block.ffn2_weights[idx].view(
                     "float8_e4m3fn"
                 )

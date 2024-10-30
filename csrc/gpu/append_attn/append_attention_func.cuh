@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #pragma once
-
+    
 #include "helper.h"
 #include "mem_util.cuh"
 #include "mma_tensor_op.cuh"
@@ -1592,7 +1592,8 @@ __device__ __forceinline__ void write_o_reg_gmem_multi_warps_shift_smooth_quant(
                                            shift_bias_vec,
                                            smooth_weight_vec,
                                            out_vec,
-                                           quant_max_bound,quant_min_bound,
+                                           quant_max_bound,
+                                           quant_min_bound,
                                            in_scale,
                                            i);
           }
@@ -1698,7 +1699,8 @@ __device__ __forceinline__ void write_o_reg_gmem_shift_smooth_quant(
                                              shift_bias_vec,
                                              smooth_weight_vec,
                                              out_vec,
-                                             quant_max_bound,quant_min_bound,
+                                             quant_max_bound,
+                                             quant_min_bound,
                                              in_scale,
                                              i);
             }
@@ -2184,7 +2186,7 @@ __global__ void merge_multi_chunks_decoder_kernel(
 #pragma unroll
     for (int i = 0; i < vec_size; ++i) {
       StoreFunc<T, vec_size, OutT>()(
-          st.o, shift_bias_vec, smooth_weight_vec, out_vec, quant_max_bound,quant_min_bound,in_scale, i);
+          st.o, shift_bias_vec, smooth_weight_vec, out_vec, quant_max_bound, quant_min_bound, in_scale, i);
     }
     Store<OutT, vec_size>(
         out_vec,
@@ -2336,7 +2338,7 @@ __global__ void merge_multi_chunks_v2_kernel(
 #pragma unroll
       for (int i = 0; i < vec_size; ++i) {
         StoreFunc<T, vec_size, OutT>()(
-            st.o, shift_bias_vec, smooth_weight_vec, out_vec, quant_max_bound,quant_min_bound,in_scale, i);
+            st.o, shift_bias_vec, smooth_weight_vec, out_vec, quant_max_bound, quant_min_bound, in_scale, i);
       }
       Store<OutT, vec_size>(
           out_vec, &out[(qid * num_heads + hid) * head_dim + vid * vec_size]);

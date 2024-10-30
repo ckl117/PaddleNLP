@@ -79,7 +79,7 @@ std::vector<paddle::Tensor> AppendAttentionKernel(
 
   auto main_stream = qkv.stream();
   static cudaEvent_t main_event;
-  static cudaEvent_t decoder_event;
+  static cudaEvent_t decoder_event;       
   static cudaStream_t decoder_stream;
   static bool init_flag = false;
   if (max_enc_len_this_time_data > 0 && max_dec_len_this_time_data > 0 &&

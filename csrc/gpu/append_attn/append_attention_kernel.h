@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #pragma once
-
+         
 #include "helper.h"
 #include "utils.cuh"
 
@@ -220,7 +220,8 @@ void CascadeAppendAttentionKernel(
                                              block_shape_q,
                                              max_seq_len,
                                              max_dec_len,
-                                             quant_max_bound,quant_min_bound,
+                                             quant_max_bound,
+                                             quant_min_bound,
                                              in_scale,
                                              max_partition_size,
                                              encoder_max_partition_size,
@@ -254,7 +255,8 @@ void CascadeAppendAttentionKernel(
                                             block_shape_q,
                                             max_seq_len,
                                             max_dec_len,
-                                            quant_max_bound,quant_min_bound,
+                                            quant_max_bound,
+                                            quant_min_bound,
                                             in_scale,
                                             max_partition_size,
                                             encoder_max_partition_size,
@@ -288,7 +290,8 @@ void CascadeAppendAttentionKernel(
                                             block_shape_q,
                                             max_seq_len,
                                             max_dec_len,
-                                            quant_max_bound,quant_min_bound,
+                                            quant_max_bound,
+                                            quant_min_bound,
                                             in_scale,
                                             max_partition_size,
                                             encoder_max_partition_size,
