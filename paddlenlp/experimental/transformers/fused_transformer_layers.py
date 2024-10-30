@@ -2449,9 +2449,21 @@ class FusedBlockMultiTransformerFP8(FusedBlockMultiTransformer):
         self.ffn1_0_biases = []
         self.ffn1_1_biases = []
 
+        self.qkv_out_scales = []
+        self.linear_out_scales = []
+        self.ffn1_0_out_scales = []
+        self.ffn1_1_out_scales = []
+        self.ffn2_out_scales = []
+
         self.init_weight_shape(config)
 
         for i in range(self.num_layers):
+            self.qkv_out_scales.append(-1.0)
+            self.linear_out_scales.append(-1.0)
+            self.ffn1_0_out_scales.append(-1.0)
+            self.ffn1_1_out_scales.append(-1.0)
+            self.ffn2_out_scales.append(-1.0)
+
             ffn1_0_bias_attr = self.get_attr(config.ffn1_0_bias_attrs, i)
             ffn1_1_bias_attr = self.get_attr(config.ffn1_1_bias_attrs, i)
 
@@ -2623,14 +2635,6 @@ class FusedBlockMultiTransformerFP8(FusedBlockMultiTransformer):
             )
 
             return qkv_out
-
-    def compute_qkv(self, src, residual_input, i):
-        """
-        For fake parameter
-        """
-        ln_out = self.compute_layernorm_before_qkv(src, i)
-        qkv_out = self.compute_qkv_linear(ln_out, i)
-        return qkv_out, residual_input
 
     def compute_out_linear(self, fmha_out, i):
         """
@@ -2866,6 +2870,9 @@ class FusedBlockMultiTransformerFP8(FusedBlockMultiTransformer):
             res = paddle.cast(tem * self.act_scales["ffn2_in_scale"][i] * 448, "float8_e4m3fn")
         return res
 
+    def compute_activation(self, ffn1_out, i):
+        return ffn1_out
+
     def compute_ffn2(self, ffn1_out, i):
         """
         For fake parameter
@@ -2911,155 +2918,3 @@ class FusedBlockMultiTransformerFP8(FusedBlockMultiTransformer):
                 residual=residual_input,
             )[0]
         return tmp_out, residual_input
-
-    def forward(
-        self,
-        input_ids,
-        src,
-        cum_offsets=None,
-        padding_offset=None,
-        attn_mask=None,
-        caches=None,
-        pre_caches=None,
-        pre_caches_length=0,
-        rotary_embs=None,
-        rotary_emb_dims=0,
-        seq_lens=None,
-        time_step=None,
-        **kwargs,
-    ):
-        r"""
-        Applies multi transformer layers on the input.
-        Parameters:
-            src (Tensor): The input of Transformer layers. It is
-                a tensor with shape `[batch_size, sequence_length, d_model]`.
-                The data type should be float16 or float32.
-            attn_mask (Tensor, optional): A tensor used in multi-head attention
-                to prevents attention to some unwanted positions, usually the
-                paddings or the subsequent positions. It is a tensor with shape
-                `[batch_size, 1, sequence_length, sequence_length]`. It can be
-                None when nothing wanted or needed to be prevented attention to.
-                Default None.
-            caches (list(Tensor)|tuple(Tensor), optional): The cache structure
-                tensors for the inference generation model. It is only used for
-                inference and should be None for training. The shape is
-                `[2, batch_size, num_head, max_seq_len, head_dim]`. Default None.
-            pre_caches (list(Tensor)|tuple(Tensor), optional): The prefix caches
-                for the generation model. The shape is `[2, bsz, num\_head, cache\_len, head\_dim]`.
-                Default None.
-            rotary_embs (Tensor optional): The RoPE embs for the rotary computation.
-                The shape is `[2, bsz, 1, seq\_len, head\_dim]`. Default None.
-            rotary_emb_dims (int, optional): The rotary_emb_dims of rotary computation,
-                and it is 0 when rotary_embs is None,
-                1 when rotary_embs is not None and pos_extra_ids is None,
-                2 when rotary_embs and pos_extra_ids are both not None. Default 0.
-            seq_lens (Tensor optional): The sequence lengths of this batch. The shape is `[bsz]`.
-                Default None.
-            time_step (Tensor, optional): The time step tensor for the generation
-                model. Which used in decode stage, to represent the time step,
-                that is, the real seq_len of CacheKV. The shape is `[1]`, must be
-                in CPUPlace. Default None.
-        Returns:
-            Tensor|tuple: If `caches` is None, return a tensor that has
-            the same shape and data type with `src`, representing the output
-            of Transformer layers. If `caches` is not None, return the
-            tuple (output, caches), which output is the output of
-            Transformer layers, caches is inplace with input `caches`.
-        """
-        self.pre_process(**kwargs)
-        kwargs["cum_offsets"] = cum_offsets
-
-        if caches is not None:
-            assert len(caches) == len(self.qkv_weights) or len(caches) == 2 * len(self.qkv_weights)
-
-        assert self.num_layers == len(self.qkv_weights)
-
-        max_enc_len_this_time, max_dec_len_this_time = self.compute_max_len(
-            kwargs.get("seq_lens_encoder", None), kwargs.get("seq_lens_decoder", None), cum_offsets
-        )
-        kwargs["max_enc_len_this_time"] = max_enc_len_this_time
-        kwargs["max_dec_len_this_time"] = max_dec_len_this_time
-
-        if self.config.append_attn:
-            kwargs["encoder_block_shape_q"] = 64
-            kwargs["decoder_block_shape_q"] = 16
-            kwargs["max_partition_size"] = 32768
-            kwargs["encoder_max_partition_size"] = 32768
-            kwargs["speculate_max_draft_token_num"] = 5
-
-            from paddlenlp_ops import get_block_shape_and_split_kv_block
-
-            (
-                kwargs["encoder_batch_ids"],
-                kwargs["encoder_tile_ids_per_batch"],
-                kwargs["encoder_num_blocks"],
-                kwargs["kv_batch_ids"],
-                kwargs["kv_tile_ids_per_batch"],
-                kwargs["kv_num_blocks"],
-                kwargs["decoder_batch_ids"],
-                kwargs["decoder_tile_ids_per_batch"],
-                kwargs["decoder_num_blocks"],
-                kwargs["max_len_kv"],
-            ) = get_block_shape_and_split_kv_block(
-                kwargs.get("seq_lens_encoder", None),
-                kwargs.get("seq_lens_decoder", None),
-                max_enc_len_this_time,
-                kwargs.get("seq_lens_this_time", None),
-                kwargs.get("cum_offsets", None),
-                kwargs.get("encoder_block_shape_q", 64),
-                kwargs.get("decoder_block_shape_q", 16),
-                self.num_heads // self.kv_num_heads,
-                kwargs.get("block_size", 64),
-                kwargs["speculate_max_draft_token_num"],
-            )
-
-        residual_input = src
-
-        for i in range(self.num_layers):
-            qkv_out, residual_input = self.compute_qkv(src, residual_input, i)
-
-            out_linear_out = self.compute_attn(
-                time_step,
-                qkv_out,
-                padding_offset,
-                seq_lens,
-                input_ids,
-                rotary_embs,
-                rotary_emb_dims,
-                caches,
-                pre_caches,
-                pre_caches_length,
-                attn_mask,
-                i,
-                **kwargs,
-            )
-            # all_reduce
-            if self.nranks > 1:
-                dist.all_reduce(out_linear_out)
-
-            # ffn layernorm
-            tmp_out, residual_input = self.compute_ffn_layernorm(out_linear_out, residual_input, i)
-
-            # ffn1 matmul
-            ffn1_out = self.compute_ffn1(tmp_out, i)
-
-            # ffn2 matmul
-            ffn2_out = self.compute_ffn2(ffn1_out, i)
-
-            # all_reduce
-            if self.nranks > 1:
-                dist.all_reduce(ffn2_out)
-
-            # norm + residual_add_bias
-            tmp_out, residual_input = self.compute_bias_residual_layernorm(
-                ffn2_out, residual_input, i, self.num_layers
-            )
-            src = tmp_out
-
-        kwargs["time_step"] = time_step
-        kwargs["multi_block_output"] = tmp_out
-        kwargs["seq_lens"] = seq_lens
-        kwargs["input_ids"] = input_ids
-
-        out = self.post_process(**kwargs)
-        return out, caches
