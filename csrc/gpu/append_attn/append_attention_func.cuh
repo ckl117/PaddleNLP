@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #pragma once
-    
+
 #include "helper.h"
 #include "mem_util.cuh"
 #include "mma_tensor_op.cuh"
