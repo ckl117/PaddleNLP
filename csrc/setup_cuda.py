@@ -66,6 +66,8 @@ def get_gencode_flags():
     if not strtobool(os.getenv("FLAG_LLM_PDC", "False")):
         prop = paddle.device.cuda.get_device_properties()
         cc = prop.major * 10 + prop.minor
+        if cc == 90:
+            cc = f"{cc}a"
         return ["-gencode", "arch=compute_{0},code=sm_{0}".format(cc)]
     else:
         # support more cuda archs
@@ -123,7 +125,7 @@ nvcc_compile_args = gencode_flags
 if not os.path.exists(cutlass_dir) or not os.listdir(cutlass_dir):
     if not os.path.exists(cutlass_dir):
         os.makedirs(cutlass_dir)
-    clone_git_repo("v3.5.0", "https://github.com/NVIDIA/cutlass.git", cutlass_dir)
+    clone_git_repo("v3.5.1", "https://github.com/NVIDIA/cutlass.git", cutlass_dir)
 
 json_dir = "third_party/nlohmann_json"
 if not os.path.exists(json_dir) or not os.listdir(json_dir):
@@ -153,13 +155,20 @@ cuda_version = float(paddle.version.cuda())
 if cc >= 80:
     sources += ["gpu/int8_gemm_with_cutlass/gemm_dequant.cu"]
 
-if cc >= 89 and cuda_version >= 12.4:
-    os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py")
-    os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py")
+if cc == 89 and cuda_version == 12.4:
+    os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py --cuda_arch 89")
+    os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py --cuda_arch 89")
     sources += find_end_files("gpu/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
     sources += [
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
+    ]
+
+sources = []
+if cc >= 90 and cuda_version >= 12.0:
+    sources += [
+        "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm_sm90.cu",
+        "gpu/fp8_gemm_with_cutlass/generic_gemm_kernel_noact_3x.cu",
     ]
 
 setup(
