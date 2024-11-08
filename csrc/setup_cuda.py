@@ -19,6 +19,14 @@ import paddle
 from paddle.utils.cpp_extension import CUDAExtension, setup
 
 
+def update_git_submodule():
+    try:
+        subprocess.run(["git", "submodule", "update", "--init"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred while updating git submodule: {str(e)}")
+        raise
+
+
 def clone_git_repo(version, repo_url, destination_path):
     try:
         subprocess.run(
@@ -116,23 +124,14 @@ sources = [
     "./gpu/append_attn/decoder_write_cache_with_rope_kernel.cu",
     "./gpu/append_attn/speculate_write_cache_with_rope_kernel.cu",
     "./gpu/sample_kernels/top_p_sampling_reject.cu",
+    "./gpu/update_inputs_v2.cu",
+    "./gpu/set_preids_token_penalty_multi_scores.cu",
 ]
 sources += find_end_files("./gpu/append_attn/template_instantiation", ".cu")
 
 cutlass_dir = "third_party/cutlass"
 nvcc_compile_args = gencode_flags
-
-if not os.path.exists(cutlass_dir) or not os.listdir(cutlass_dir):
-    if not os.path.exists(cutlass_dir):
-        os.makedirs(cutlass_dir)
-    clone_git_repo("v3.5.1", "https://github.com/NVIDIA/cutlass.git", cutlass_dir)
-
-json_dir = "third_party/nlohmann_json"
-if not os.path.exists(json_dir) or not os.listdir(json_dir):
-    if not os.path.exists(json_dir):
-        os.makedirs(json_dir)
-    clone_git_repo("v3.11.3", "https://github.com/nlohmann/json.git", json_dir)
-
+update_git_submodule()
 nvcc_compile_args += [
     "-O3",
     "-U__CUDA_NO_HALF_OPERATORS__",
@@ -164,12 +163,14 @@ if cc == 89 and cuda_version == 12.4:
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
     ]
 
+# test for fp8 gemm on sm90
 sources = []
 if cc >= 90 and cuda_version >= 12.0:
     sources += [
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm_sm90.cu",
         "gpu/fp8_gemm_with_cutlass/generic_gemm_kernel_noact_3x.cu",
     ]
+
 
 setup(
     name="paddlenlp_ops",
