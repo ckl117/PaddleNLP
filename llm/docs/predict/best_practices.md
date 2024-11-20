@@ -9,6 +9,10 @@ PaddleNLP 提供了多种环境变量，用于优化推理性能和资源使用�
 
 - `FLAGS_cublaslt_device_best_config`：在 FLAGS_enable_blaslt_global_search 设为1的前提下，使用`FLAGS_cublaslt_device_best_config`来指定离线调优出的 int8 gemm 配置文件，默认值为""。配置文件可以通过`PaddleNLP/csrc/utils/tune_cublaslt_int8_gemm.py`产出，该脚本会自动搜索当前输入大小下 cuBLASLt 提供的最优 gemm 配置并将结果记录下来，需要注意的是不同的 CUDA 版本需要分别 tune。推理 A8W8模型并且 FLAGS_enable_blaslt_global_search 设为1时使用此 FLAG 会获得更优的性能。
 
+- `FLAGS_CUTLASS_FP8_GEMM`: fp8 gemm 是否使用 cutlass 版本，默认值为 False, 表示不开启。设置为 True，则在 A8W8模型上使用 Tensor Core 进行计算，性能会更好。
+
+- `FLAGS_use_cutlass_device_best_config_path`: 在 `FLAGS_CUTLASS_FP8_GEMM` 设为 True 的前提下，使用该环境变量来指定离线调优出的 fp8 gemm 配置文件，默认值为""。配置文件可以通过`PaddleNLP/csrc/utils/tune_cutlass_fp8_*.py`产出，该脚本会自动搜索当前输入大小下提供的最优 gemm 配置并将结果记录下来，默认产出文件为`fp8_fuse_gemm_config.json`。不同 NVIDIA GPU 和 CUDA 版本需要分别调优。
+
 **GQA 优化**
 
 - `FLAGS_use_xqa_optim`：gpa 是否开启 xqa 优化，默认值为0，表示不开启。gqa 模型（如 llama3/3.1、qwen2）设为1性能会更好。
