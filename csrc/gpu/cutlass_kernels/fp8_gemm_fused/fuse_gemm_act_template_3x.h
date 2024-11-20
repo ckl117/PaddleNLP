@@ -24,16 +24,22 @@
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
 #include "cutlass/gemm/kernel/tile_scheduler.hpp"
+#include "cutlass/util/packed_stride.hpp"
+
+using namespace cute;
 
 template <
   typename InputType = phi::dtype::float8_e4m3fn,
   typename OutType = phi::dtype::float16,
-  typename TileShape = cute::Shape<cute::_128, cute::_128, cute::_128>,
-  typename ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>,
+  bool hasbias = false,
+  template <class> typename Activation = cutlass::epilogue::thread::Identity,
+  typename TileShape = Shape<_128, _128, _128>,
+  typename ClusterShape = Shape<_2, _1, _1>,
   typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedPingpongFP8FastAccum,
-  typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecialized
+  typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecialized,
+  typename SM = cutlass::arch::Sm90
 >
-bool dispatch_fuse_gemm_noact_sm90(GemmEpilogueAllParams params) {
+bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
   using ElementA = typename std::conditional_t<std::is_same_v<InputType, phi::dtype::float8_e4m3fn>,
                                                               cutlass::float_e4m3_t,
                                                               cutlass::float_e5m2_t>;
@@ -41,7 +47,10 @@ bool dispatch_fuse_gemm_noact_sm90(GemmEpilogueAllParams params) {
   using ElementD = typename std::conditional_t<std::is_same_v<OutType, phi::dtype::bfloat16>,
                                   cutlass::bfloat16_t,
                                   cutlass::half_t>;
-  using ElementC = ElementD;
+  using ElementC = std::conditional_t<
+        hasbias,
+        ElementD,
+        void>;
 
   using LayoutA = cutlass::layout::RowMajor;
   using LayoutB = cutlass::layout::ColumnMajor;
@@ -55,15 +64,15 @@ bool dispatch_fuse_gemm_noact_sm90(GemmEpilogueAllParams params) {
   // 16B alignment lets us use TMA
   static constexpr int AlignmentA = 16 / sizeof(ElementA);
   static constexpr int AlignmentB = 16 / sizeof(ElementB);
-  static constexpr int AlignmentC = 16 / sizeof(ElementC);
+  static constexpr int AlignmentC = hasbias ? 16 / sizeof(ElementC) : 8;
   static constexpr int AlignmentD = 16 / sizeof(ElementD);
 
   static constexpr auto RoundStyle = cutlass::FloatRoundStyle::round_to_nearest;
 
-  using DefaultOperation = cutlass::epilogue::fusion::LinearCombination<ElementD, ElementCompute, ElementC, ElementScalar, RoundStyle>;
+  using FusionOperation = cutlass::epilogue::fusion::LinCombEltAct<Activation, ElementD, ElementCompute, ElementC, ElementScalar, RoundStyle>;
 
   using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilder<
-      cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
+      SM, cutlass::arch::OpClassTensorOp,
       TileShape,
       ClusterShape,
       cutlass::epilogue::collective::EpilogueTileAuto,
@@ -71,11 +80,11 @@ bool dispatch_fuse_gemm_noact_sm90(GemmEpilogueAllParams params) {
       ElementC, LayoutC, AlignmentC,
       ElementD, LayoutD, AlignmentD,
       EpilogueSchedule,
-      DefaultOperation
+      FusionOperation
     >::CollectiveOp;
 
   using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
-      cutlass::arch::Sm90, cutlass::arch::OpClassTensorOp,
+      SM, cutlass::arch::OpClassTensorOp,
       ElementA, LayoutA, AlignmentA,
       ElementB, LayoutB, AlignmentB,
       ElementAccumulator,
@@ -86,7 +95,7 @@ bool dispatch_fuse_gemm_noact_sm90(GemmEpilogueAllParams params) {
     >::CollectiveOp;
 
   using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
-      cute::Shape<int,int,int,int>,
+      Shape<int,int,int,int>,
       CollectiveMainloop,
       CollectiveEpilogue,
       cutlass::gemm::PersistentScheduler
@@ -117,28 +126,36 @@ bool dispatch_fuse_gemm_noact_sm90(GemmEpilogueAllParams params) {
   auto d_ptr = reinterpret_cast<ElementD*>(params.D);
 
   ProblemShapeType problem_size = ProblemShapeType{params.M, params.N, params.K, 1};
+
   typename Gemm::Arguments arguments{
     cutlass::gemm::GemmUniversalMode::kGemm,
     problem_size,
     {a_ptr, stride_A, b_ptr, stride_B},
-    {{}, // epilogue.thread
+    {{params.scale}, // epilogue.thread
       c_ptr, stride_C, d_ptr, stride_D}
   };
+  if constexpr (hasbias){
+    arguments.epilogue.thread.beta = 1.0;
+  }
   
-  arguments.epilogue.thread.alpha = params.scale;
-  arguments.epilogue.thread.beta = 1.0f;
-    
 
   Gemm gemm_op;
 
+  cutlass::Status status = gemm_op.can_implement(arguments);
+  if (status != cutlass::Status::kSuccess) {
+    std::cerr << "Gemm::can_implement() failed. " << cutlassGetStatusString(status) << std::endl;
+    return false;
+  }
   size_t workspace_size = Gemm::get_workspace_size(arguments);
   phi::Allocator* allocator = paddle::GetAllocator(params.place);
   auto workspace = allocator->Allocate(workspace_size);
-  cutlass::Status status = gemm_op.can_implement(arguments);
+
   status = gemm_op(arguments, workspace->ptr(), params.stream);
   if (status != cutlass::Status::kSuccess) {
-    std::cerr << "Gemm::run() failed" << std::endl;
+    std::cerr << "Gemm::run() failed." << cutlassGetStatusString(status) << std::endl;
     return false;
   }
-
+  return true;
 }
+
+

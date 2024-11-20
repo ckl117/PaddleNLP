@@ -145,6 +145,7 @@ nvcc_compile_args += [
     "-Igpu/fp8_gemm_with_cutlass",
     "-Igpu/cutlass_kernels/fp8_gemm_fused/autogen",
     "-Ithird_party/cutlass/include",
+    "-Ithird_party/cutlass/tools/util/include",
     "-Ithird_party/nlohmann_json/single_include",
     "-Igpu/sample_kernels",
 ]
@@ -163,14 +164,14 @@ if cc == 89 and cuda_version == 12.4:
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
     ]
 
-# test for fp8 gemm on sm90
-sources = []
 if cc >= 90 and cuda_version >= 12.0:
+    # O3 will cause some configurations of Cutlass FP8 Gemm to be unavailable
+    nvcc_compile_args.remove("-O3")
+    os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels_sm90.py --cuda_arch 90")
+    sources += find_end_files("gpu/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
     sources += [
-        "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm_sm90.cu",
-        "gpu/fp8_gemm_with_cutlass/generic_gemm_kernel_noact_3x.cu",
+        "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
     ]
-
 
 setup(
     name="paddlenlp_ops",
