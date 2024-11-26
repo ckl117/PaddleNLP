@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import shutil
 import subprocess
 
 import paddle
@@ -116,8 +117,8 @@ sources += find_end_files("./gpu/append_attn/template_instantiation", ".cu")
 
 nvcc_compile_args = gencode_flags
 update_git_submodule()
+# O3 will cause some configurations of Cutlass FP8 Gemm to be unavailable
 nvcc_compile_args += [
-    "-O3",
     "-U__CUDA_NO_HALF_OPERATORS__",
     "-U__CUDA_NO_HALF_CONVERSIONS__",
     "-U__CUDA_NO_BFLOAT16_OPERATORS__",
@@ -136,23 +137,26 @@ nvcc_compile_args += [
 
 cc = get_sm_version()
 cuda_version = float(paddle.version.cuda())
+
+fp8_auto_gen_directory = "gpu/cutlass_kernels/fp8_gemm_fused/autogen"
+if os.path.isdir(fp8_auto_gen_directory):
+    shutil.rmtree(fp8_auto_gen_directory)
+
 if cc >= 80:
     sources += ["gpu/int8_gemm_with_cutlass/gemm_dequant.cu"]
 
 if cc == 89 and cuda_version == 12.4:
     os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py --cuda_arch 89")
     os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py --cuda_arch 89")
-    sources += find_end_files("gpu/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
+    sources += find_end_files(fp8_auto_gen_directory, ".cu")
     sources += [
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
     ]
 
 if cc >= 90 and cuda_version >= 12.0:
-    # O3 will cause some configurations of Cutlass FP8 Gemm to be unavailable
-    nvcc_compile_args.remove("-O3")
     os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels_sm90.py --cuda_arch 90")
-    sources += find_end_files("gpu/cutlass_kernels/fp8_gemm_fused/autogen", ".cu")
+    sources += find_end_files(fp8_auto_gen_directory, ".cu")
     sources += [
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
     ]

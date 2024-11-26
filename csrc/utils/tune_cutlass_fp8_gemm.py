@@ -32,8 +32,9 @@ def setup_args():
 def gemm(m, n, k):
     A = paddle.ones([m, k], dtype="float8_e4m3fn")
     B = paddle.ones([n, k], dtype="float8_e4m3fn")
+    bias = paddle.ones([n], dtype="bfloat16")
     res = cutlass_fp8_fp8_half_gemm_fused(
-        A, B, bias=None, transpose_x=False, transpose_y=True, output_dtype="bfloat16", scale=0.5, act="identity"
+        A, B, bias=bias, transpose_x=False, transpose_y=True, output_dtype="bfloat16", scale=0.5, act="identity"
     )
     return res
 

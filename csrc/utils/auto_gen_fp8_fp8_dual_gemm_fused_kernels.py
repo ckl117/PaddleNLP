@@ -223,23 +223,9 @@ bool fp8_fp8_dual_gemm_scale_bias_act(DualGemmEpilogueAllParams params) {
   int kernel_id;
   std::string best_config;
   CutlassGemmConfigMannager& best_config_mannager = CutlassGemmConfigMannager::getInstance();
-  if(getenv("FLAGS_use_cutlass_device_best_config_path")){ // run kernel
-    std::string config_file_path = getenv("FLAGS_use_cutlass_device_best_config_path");
-    nlohmann::json* config_json = new nlohmann::json();
-    if (config_file_path != "default") {
-        config_json = best_config_mannager.get_gemm_best_configs(config_file_path);
-    }
-
-    best_config = get_relative_best<std::string>(config_json, mnk_string, regex_mnk_string, M, "<64, 64, 64>, <32, 32, 64>, <16, 8, 32>, 3");
-    split_k = get_relative_best<int>(config_json, mnk_split_k_string, regex_mnk_split_k_string, M, 1);
-
-    if (dual_gemm_config_map.find(best_config) == dual_gemm_config_map.end()) {
-        throw std::runtime_error("This config'kernel not be generate, please check generate_code_gemm_fused_kernels.py and re-generate.");
-    } else {
-        kernel_id = dual_gemm_config_map[best_config];
-    }
-    return launch_gemm_kernel(type_id, split_k, kernel_id, params);
-  } else { // tune kernel
+  char *config_file_path_c_str = getenv("FLAGS_use_cutlass_device_best_config_path");
+  std::string config_file_path = config_file_path_c_str == nullptr ? "" : std::string(config_file_path_c_str);
+  if(config_file_path == "tune"){ // tune kernel
     int warm_up_times = 5;
     int tune_times = 10;
     std::string best_kernel_id = "";
@@ -294,6 +280,21 @@ bool fp8_fp8_dual_gemm_scale_bias_act(DualGemmEpilogueAllParams params) {
     best_config_mannager.up_date_configs(new_json);
     std::cout <<"Gemm tune result for " << mnk_string<< ": best config is: "<< best_kernel_id << ", split k: " << best_split_k << std::endl;
     return true;
+  } else { // run kernel
+    nlohmann::json* config_json = new nlohmann::json();
+    if (config_file_path != "" && config_file_path == "default") {
+        config_json = best_config_mannager.get_gemm_best_configs(config_file_path);
+    }
+
+    best_config = get_relative_best<std::string>(config_json, mnk_string, regex_mnk_string, M, "<64, 64, 64>, <32, 32, 64>, <16, 8, 32>, 3");
+    split_k = get_relative_best<int>(config_json, mnk_split_k_string, regex_mnk_split_k_string, M, 1);
+
+    if (dual_gemm_config_map.find(best_config) == dual_gemm_config_map.end()) {
+        throw std::runtime_error("This config'kernel not be generate, please check generate_code_gemm_fused_kernels.py and re-generate.");
+    } else {
+        kernel_id = dual_gemm_config_map[best_config];
+    }
+    return launch_gemm_kernel(type_id, split_k, kernel_id, params);
   }
 }
 """

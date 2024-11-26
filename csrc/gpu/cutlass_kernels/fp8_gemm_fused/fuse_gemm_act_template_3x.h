@@ -143,7 +143,7 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
 
   cutlass::Status status = gemm_op.can_implement(arguments);
   if (status != cutlass::Status::kSuccess) {
-    std::cerr << "Gemm::can_implement() failed. " << cutlassGetStatusString(status) << std::endl;
+    std::cout << "Gemm::can_implement() failed. " << cutlassGetStatusString(status) << std::endl;
     return false;
   }
   size_t workspace_size = Gemm::get_workspace_size(arguments);
@@ -152,10 +152,8 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
 
   status = gemm_op(arguments, workspace->ptr(), params.stream);
   if (status != cutlass::Status::kSuccess) {
-    std::cerr << "Gemm::run() failed." << cutlassGetStatusString(status) << std::endl;
+    std::cout << "Gemm::run() failed." << cutlassGetStatusString(status) << std::endl;
     return false;
   }
   return true;
 }
-
-
