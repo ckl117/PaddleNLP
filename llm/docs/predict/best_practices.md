@@ -13,6 +13,10 @@ PaddleNLP 提供了多种环境变量，用于优化推理性能和资源使用�
 
 - `FLAGS_use_cutlass_device_best_config_path`: 在 `FLAGS_CUTLASS_FP8_GEMM` 设为 True 的前提下，使用该环境变量来指定离线调优出的 fp8 gemm 配置文件。配置文件可以通过`PaddleNLP/csrc/utils/tune_cutlass_fp8_*.py`产出，该脚本会自动搜索当前输入大小下提供的最优 gemm 配置并将结果记录下来，默认产出文件为`fp8_fuse_gemm_config.json`。不同 NVIDIA GPU 和 CUDA 版本需要分别调优，SM89架构 GPU 增加 dual_gemm 调优，具体可参考`dual_gemm.py`。可选值：`tune`，开启调优；空值或`default`，使用默认配置；任意值，优先使用配置文件中的参数，若无则使用默认配置。
 
+- `FLAGS_cuda_core_int8_gemm`：是否开启小 Batch Int8 Gemm 优化，默认值不开启。设为1可开启，推理 A8W8模型时，平均性能会加速约40%-55%，适用于 SM>=70的显卡。
+
+- `FLAGS_cuda_core_fp8_gemm`：是否开启小 Batch FP8 Gemm 优化，默认值不开启。设为1可开启，推理 FP8模型时，平均性能会加速约30%左右，适用于 SM>=89的显卡。
+
 **GQA 优化**
 
 - `FLAGS_use_xqa_optim`：gpa 是否开启 xqa 优化，默认值为0，表示不开启。gqa 模型（如 llama3/3.1、qwen2）设为1性能会更好。
