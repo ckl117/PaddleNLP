@@ -282,7 +282,7 @@ bool fp8_fp8_dual_gemm_scale_bias_act(DualGemmEpilogueAllParams params) {
     return true;
   } else { // run kernel
     nlohmann::json* config_json = new nlohmann::json();
-    if (config_file_path != "" && config_file_path == "default") {
+    if (config_file_path != "" && config_file_path != "default") {
         config_json = best_config_mannager.get_gemm_best_configs(config_file_path);
     }
 
