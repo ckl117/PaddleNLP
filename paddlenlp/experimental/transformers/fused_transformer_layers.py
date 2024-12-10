@@ -61,10 +61,9 @@ def get_sm_version():
 if paddle.is_compiled_with_cuda():
     if use_cutlass_fp8_gemm():
         logger.info("cutlass fp8 gemm is used. you can turn it off by setting FLAGS_CUTLASS_FP8_GEMM to False.")
-        if get_sm_version() == 89:
-            from paddlenlp_ops import (
-                cutlass_fp8_fp8_fp8_dual_gemm_fused as fp8_dual_gemm_fused,
-            )
+        from paddlenlp_ops import (
+            cutlass_fp8_fp8_fp8_dual_gemm_fused as fp8_dual_gemm_fused,
+        )
         from paddlenlp_ops import cutlass_fp8_fp8_half_gemm_fused as fp8_gemm_fused
     else:
         from paddle.linalg import fp8_fp8_half_gemm_fused as fp8_gemm_fused
@@ -2843,7 +2842,7 @@ class FusedBlockMultiTransformerFP8(FusedBlockMultiTransformer):
         """
         For fake parameter
         """
-        if use_cutlass_fp8_gemm() and get_sm_version() == 89:
+        if use_cutlass_fp8_gemm():
             res = fp8_dual_gemm_fused(
                 tmp_out,
                 self.ffn1_0_weights[i],
