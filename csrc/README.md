@@ -10,7 +10,11 @@ pip install -r requirements.txt
 
 ## 编译 Cuda 算子
 
-编译
+```shell
+python setup_cuda.py install
+```
+
+## 生成 FP8的 cutlass 算子
 ```shell
 python setup_cuda.py install
 ```
