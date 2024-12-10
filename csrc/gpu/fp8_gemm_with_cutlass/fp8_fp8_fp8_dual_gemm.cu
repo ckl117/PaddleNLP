@@ -169,8 +169,11 @@ std::vector<paddle::Tensor> cutlass_fp8_fp8_fp8_dual_gemm(
       bias_dims0,
       bias_dims1,
       fuse_gemm_config};
-
-  fp8_fp8_dual_gemm_scale_bias_act(params);
+  if (sm_version == 89) {
+    fp8_fp8_dual_gemm_scale_bias_act(params);
+  }else{
+    fp8_fp8_dual_gemm_scale_bias_act_sm90(params);
+  }
   return {out};
 }
 
