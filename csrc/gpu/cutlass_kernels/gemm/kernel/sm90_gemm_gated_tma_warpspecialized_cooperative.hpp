@@ -1,4 +1,5 @@
 /***************************************************************************************************
+ * Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
  * Copyright (c) 2023 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -592,7 +593,7 @@ public:
                 CUTLASS_PRAGMA_UNROLL
                 for (int i = 0; i < size(accumulators0); i++)
                 {
-                    accumulators0[i] = (accumulators0[i] * scale_d0) * elt_op(scale_d1 * accumulators1[i]);
+                    accumulators0[i] = elt_op(accumulators0[i] * scale_d0) * (scale_d1 * accumulators1[i]);
                 }
 
                 if (TileScheduler::compute_epilogue(work_tile_info, params.scheduler))
