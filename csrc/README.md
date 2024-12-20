@@ -14,11 +14,6 @@ pip install -r requirements.txt
 python setup_cuda.py install
 ```
 
-## 生成 FP8的 cutlass 算子
-```shell
-python setup_cuda.py install
-```
-
 ### FP8 GEMM 自动调优
 
 确保 `cutlass` 库已经安装，然后执行以下命令进行自动调优。
