@@ -1,16 +1,3 @@
-// Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 /***************************************************************************************************
  * Copyright (c) 2023 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: BSD-3-Clause
@@ -182,6 +169,11 @@ public:
         CUTLASS_TRACE_HOST("to_underlying_arguments():");
 
         auto problem_shape = args.problem_shape;
+        // if constexpr (detail::IF_SWAP_AB<CollectiveMainloop>::value) {
+        //   // swap M/N
+        //   get<0>(problem_shape) = get<1>(args.problem_shape);
+        //   get<1>(problem_shape) = get<0>(args.problem_shape);
+        // }
         auto problem_shape_MNKL = append<4>(problem_shape, 1);
 
         // Get SM count if needed, otherwise use user supplied SM count
@@ -600,7 +592,7 @@ public:
                 CUTLASS_PRAGMA_UNROLL
                 for (int i = 0; i < size(accumulators0); i++)
                 {
-                    accumulators0[i] = elt_op(accumulators0[i] * scale_d0) * (scale_d1 * accumulators1[i]);
+                    accumulators0[i] = (accumulators0[i] * scale_d0) * elt_op(scale_d1 * accumulators1[i]);
                 }
 
                 if (TileScheduler::compute_epilogue(work_tile_info, params.scheduler))

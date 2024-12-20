@@ -18,9 +18,6 @@
 #include "cutlass/float8.h"
 #include "cutlass/gemm/device/gemm_universal.h"
 
-#include "fp8_gemm_fused/dual_gemm/device/dual_gemm.h"
-#include "fp8_gemm_fused/dual_gemm/thread/left_silu_and_mul.h"
-
 #include "cutlass/util/packed_stride.hpp"
 #include "cutlass/gemm/dispatch_policy.hpp"
 #include "cutlass/gemm/collective/collective_builder.hpp"
@@ -35,7 +32,7 @@ using namespace cute;
 
 template <typename InputType, typename CTAShape, typename ClusterShape,
     typename MainloopScheduleType, typename EpilogueScheduleType, typename TileSchedulerType = void,
-    template <class /* ElementCompute */> class Activation = cutlass::epilogue::thread::SiLu>
+    template <class /* ElementCompute */> class Activation = cutlass::epilogue::thread::SiLu, bool SwapAB = true>
 bool dispatch_dual_gemm_act_sm90(DualGemmEpilogueAllParams params) {
   using ElementA = typename std::conditional_t<
       std::is_same_v<InputType, phi::dtype::float8_e4m3fn>,
@@ -54,8 +51,8 @@ bool dispatch_dual_gemm_act_sm90(DualGemmEpilogueAllParams params) {
                                                        // matrix in units of elements (up to 16 bytes)
 
     using ElementC = ElementA; // Element type for C matrix operands
-    using LayoutC = cutlass::layout::RowMajor;         // Layout type for C matrix operands
 
+    using LayoutC = cute::conditional_t<SwapAB, cutlass::layout::ColumnMajor, cutlass::layout::RowMajor>;
     static constexpr int AlignmentC
         = 128 / cutlass::sizeof_bits<ElementC>::value; // Memory access granularity/alignment of C matrices in units of
                                                        // elements (up to 16 bytes)
@@ -63,7 +60,7 @@ bool dispatch_dual_gemm_act_sm90(DualGemmEpilogueAllParams params) {
     // Output matrix configuration
     using ElementOutput = ElementA; // Element type for output matrix operands
     // using LayoutOutput = cutlass::layout::RowMajor; // Layout type for output matrix operands
-    using LayoutOutput = cutlass::layout::RowMajor;
+    using LayoutOutput = cute::conditional_t<SwapAB, cutlass::layout::ColumnMajor, cutlass::layout::RowMajor>;
     static constexpr int AlignmentOutput = 128 / cutlass::sizeof_bits<ElementOutput>::value;
 
     // Multiply-accumulate blocking/pipelining details
@@ -89,7 +86,7 @@ bool dispatch_dual_gemm_act_sm90(DualGemmEpilogueAllParams params) {
         ElementA, LayoutA, AlignmentA, ElementB, LayoutB, AlignmentB, ElementAccumulator, TileShape, ClusterShape,
         cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(
             sizeof(typename CollectiveEpilogue::SharedStorage))>,
-        KernelSchedule, Activation>::CollectiveOp;
+        KernelSchedule, Activation, SwapAB>::CollectiveOp;
 
     using GemmKernel = cutlass::gemm::kernel::GemmUniversalGated<Shape<int, int, int, int>, // Indicates ProblemShape
         CollectiveMainloop, CollectiveEpilogue, TileScheduler>;
@@ -101,14 +98,24 @@ bool dispatch_dual_gemm_act_sm90(DualGemmEpilogueAllParams params) {
     using StrideC = typename Gemm::GemmKernel::StrideC;
     using StrideD = typename Gemm::GemmKernel::StrideD;
 
+    int arg_m = params.M;
+    int arg_n = params.N;
     ElementA const* ptr_A = reinterpret_cast<ElementA const*>(params.A);
     ElementB const* ptr_B0 = reinterpret_cast<ElementB const*>(params.B0);
     ElementB const* ptr_B1 = reinterpret_cast<ElementB const*>(params.B1);
-    StrideA stride_A = cutlass::make_cute_packed_stride(StrideA{}, cute::make_shape(params.M, params.K, 1));
-    StrideB stride_B = cutlass::make_cute_packed_stride(StrideB{}, cute::make_shape(params.N, params.K, 1));
+    if constexpr (SwapAB)
+    {
+        arg_m = params.N;
+        arg_n = params.M;
+        ptr_A = reinterpret_cast<ElementB const*>(params.B0);
+        ptr_B0 = reinterpret_cast<ElementA const*>(params.A);
+    }
+    StrideA stride_A = cutlass::make_cute_packed_stride(StrideA{}, cute::make_shape(arg_m, params.K, 1));
+    StrideB stride_B = cutlass::make_cute_packed_stride(StrideB{}, cute::make_shape(arg_n, params.K, 1));
     StrideC stride_C;
-    StrideD stride_D = cutlass::make_cute_packed_stride(StrideD{}, cute::make_shape(params.M, params.N, 1));
-    typename Gemm::Arguments arguments = {cutlass::gemm::GemmUniversalMode::kGemm, {params.M, params.N, params.K, 1},
+    StrideD stride_D = cutlass::make_cute_packed_stride(StrideD{}, cute::make_shape(arg_m, arg_n, 1));
+
+    typename Gemm::Arguments arguments = {cutlass::gemm::GemmUniversalMode::kGemm, {arg_m, arg_n, params.K, 1},
         {ptr_A, stride_A, ptr_B0, ptr_B1, stride_B, params.scale0, params.scale1},
         {{}, // epilogue.thread
             nullptr, stride_C, reinterpret_cast<ElementOutput*>(params.D), stride_D}};

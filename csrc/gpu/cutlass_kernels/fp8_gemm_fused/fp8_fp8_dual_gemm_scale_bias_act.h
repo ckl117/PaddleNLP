@@ -21,6 +21,3 @@
 
 bool fp8_fp8_dual_gemm_scale_bias_act(
     DualGemmEpilogueAllParams params);
-
-bool fp8_fp8_dual_gemm_scale_bias_act_sm90(
-    DualGemmEpilogueAllParams params);

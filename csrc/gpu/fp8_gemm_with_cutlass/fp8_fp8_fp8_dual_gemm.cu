@@ -99,7 +99,7 @@ std::vector<paddle::Tensor> cutlass_fp8_fp8_fp8_dual_gemm(
   }
 
   std::string isbias = "false";
-  std::string bias_dtype = "float16";
+  std::string bias_dtype = "None";
   void* bias_data0 = nullptr;
   void* bias_data1 = nullptr;
   std::vector<int64_t> bias_dims0{};
@@ -132,7 +132,7 @@ std::vector<paddle::Tensor> cutlass_fp8_fp8_fp8_dual_gemm(
     out0_ptr = reinterpret_cast<void*>(out0.data<phi::dtype::float16>());
     out1 = paddle::empty(out_shape, phi::DataType::FLOAT16, x.place());
     out1_ptr = reinterpret_cast<void*>(out1.data<phi::dtype::float16>());
-  } else {
+  } else if(bias_dtype == "bfloat16") {
     out0 = paddle::empty(out_shape, phi::DataType::BFLOAT16, x.place());
     out0_ptr = reinterpret_cast<void*>(out0.data<phi::dtype::bfloat16>());
     out1 = paddle::empty(out_shape, phi::DataType::BFLOAT16, x.place());
@@ -169,11 +169,9 @@ std::vector<paddle::Tensor> cutlass_fp8_fp8_fp8_dual_gemm(
       bias_dims0,
       bias_dims1,
       fuse_gemm_config};
-  if (sm_version == 89) {
-    fp8_fp8_dual_gemm_scale_bias_act(params);
-  }else{
-    fp8_fp8_dual_gemm_scale_bias_act_sm90(params);
-  }
+  
+  fp8_fp8_dual_gemm_scale_bias_act(params);
+  
   return {out};
 }
 

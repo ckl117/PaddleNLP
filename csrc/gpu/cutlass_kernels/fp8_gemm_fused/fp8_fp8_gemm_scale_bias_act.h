@@ -22,5 +22,3 @@
 #include "fuse_gemm_act_template_3x.h"
 
 bool fp8_fp8_gemm_scale_bias_act(GemmEpilogueAllParams params);
-
-bool fp8_fp8_gemm_scale_bias_act_sm90(GemmEpilogueAllParams params);

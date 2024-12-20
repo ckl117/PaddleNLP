@@ -1,16 +1,34 @@
-// Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/***************************************************************************************************
+ * Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+ * Copyright (c) 2023 - 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ **************************************************************************************************/
 
 #pragma once
 
@@ -40,12 +58,13 @@ using namespace cute;
 template <int Stages, class ClusterShape, class KernelSchedule, class TileShape_, class ElementA_, class StrideA_,
     class ElementB_, class StrideB_, class TiledMma_, class GmemTiledCopyA_, class SmemLayoutAtomA_,
     class SmemCopyAtomA_, class TransformA_, class GmemTiledCopyB_, class SmemLayoutAtomB_, class SmemCopyAtomB_,
-    class TransformB_, template <class /* ElementCompute */> class Activation_>
+    class TransformB_, template <class /* ElementCompute */> class Activation_, bool SwapAB_>
 struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterShape, KernelSchedule>, TileShape_,
     ElementA_, StrideA_, ElementB_, StrideB_, TiledMma_, GmemTiledCopyA_, SmemLayoutAtomA_, SmemCopyAtomA_, TransformA_,
-    GmemTiledCopyB_, SmemLayoutAtomB_, SmemCopyAtomB_, TransformB_, Activation_>
+    GmemTiledCopyB_, SmemLayoutAtomB_, SmemCopyAtomB_, TransformB_, Activation_, SwapAB_>
 {
     static constexpr bool isGated = true;
+    static constexpr bool SwapAB = SwapAB_;
 
     //
     // Type Aliases
@@ -69,8 +88,8 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
     using ArchTag = typename DispatchPolicy::ArchTag;
     using Activation = Activation_<ElementAccumulator>;
 
-    using ElementAux = ElementB_;
-    using ValTypeAux = typename TiledMma::ValTypeB;
+    using ElementAux = cute::conditional_t<SwapAB, ElementA_, ElementB_>;
+    using ValTypeAux = cute::conditional_t<SwapAB, typename TiledMma::ValTypeA, typename TiledMma::ValTypeB>;
 
     using MainloopPipeline = cutlass::PipelineTmaAsync<DispatchPolicy::Stages>;
     using PipelineState = cutlass::PipelineState<DispatchPolicy::Stages>;
@@ -96,7 +115,7 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
     using SmemLayoutB = decltype(tile_to_shape(SmemLayoutAtomB{},
         make_shape(shape<1>(TileShape{}), shape<2>(TileShape{}), Int<DispatchPolicy::Stages>{}),
         conditional_t<::cutlass::gemm::detail::is_major<0, StrideB>(), Step<_2, _1, _3>, Step<_1, _2, _3>>{}));
-    using SmemLayoutAux = SmemLayoutB;
+    using SmemLayoutAux = cute::conditional_t<SwapAB, SmemLayoutA, SmemLayoutB>;
 
     static_assert(DispatchPolicy::Stages >= 2, "Specialization requires Stages set to value 1 or more.");
     static_assert(cute::is_base_of<cute::GMMA::DescriptorIterator, typename TiledMma::FrgTypeA>::value
@@ -151,7 +170,7 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
             make_tensor(static_cast<ElementB const*>(nullptr), repeat_like(StrideB{}, int32_t(0)), StrideB{}),
             SmemLayoutB{}(_, _, 0), make_shape(shape<1>(TileShape{}), shape<2>(TileShape{})),
             size<0>(ClusterShape{}))); // mcast along M mode for this N load, if any
-        using TMA_Aux = TMA_B;
+        using TMA_Aux = cute::conditional_t<SwapAB, TMA_A, TMA_B>;
         TMA_A tma_load_a;
         TMA_B tma_load_b;
         TMA_Aux tma_load_aux;
@@ -176,21 +195,33 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
 
         auto ptr_A = reinterpret_cast<ElementA const*>(args.ptr_A);
         auto ptr_B0 = reinterpret_cast<ElementB const*>(args.ptr_B0);
-        auto ptr_B1 = reinterpret_cast<ElementB const*>(args.ptr_B1);
 
         Tensor tensor_a = make_tensor(ptr_A, make_layout(make_shape(M, K, L), args.dA));
-        Tensor tensor_b0 = make_tensor(ptr_B0, make_layout(make_shape(N, K, L), args.dB));
-        Tensor tensor_b1 = make_tensor(ptr_B1, make_layout(make_shape(N, K, L), args.dB));
+        Tensor tensor_b = make_tensor(ptr_B0, make_layout(make_shape(N, K, L), args.dB));
         typename Params::TMA_A tma_load_a = make_tma_copy(GmemTiledCopyA{}, tensor_a,
             SmemLayoutA{}(_, _, cute::Int<0>{}), make_shape(shape<0>(TileShape{}), shape<2>(TileShape{})),
             size<1>(ClusterShape{})); // mcast along N mode for this M load, if any
-        typename Params::TMA_B tma_load_b0 = make_tma_copy(GmemTiledCopyB{}, tensor_b0,
+        typename Params::TMA_B tma_load_b = make_tma_copy(GmemTiledCopyB{}, tensor_b,
             SmemLayoutB{}(_, _, cute::Int<0>{}), make_shape(shape<1>(TileShape{}), shape<2>(TileShape{})),
             size<0>(ClusterShape{})); // mcast along M mode for this N load, if any
-        typename Params::TMA_Aux tma_load_b1 = make_tma_copy(GmemTiledCopyB{}, tensor_b1,
-            SmemLayoutB{}(_, _, cute::Int<0>{}), make_shape(shape<1>(TileShape{}), shape<2>(TileShape{})),
-            size<0>(ClusterShape{})); // mcast along M mode for this N load, if any
-        return {tma_load_a, tma_load_b0, tma_load_b1, args.scale_d0, args.scale_d1, args.mma_promotion_interval};
+        if constexpr (SwapAB)
+        {
+            auto ptr_Aux = reinterpret_cast<ElementA const*>(args.ptr_B1);
+            Tensor tensor_aux = make_tensor(ptr_Aux, make_layout(make_shape(M, K, L), args.dA));
+            typename Params::TMA_Aux tma_load_aux = make_tma_copy(GmemTiledCopyA{}, tensor_aux,
+                SmemLayoutA{}(_, _, cute::Int<0>{}), make_shape(shape<0>(TileShape{}), shape<2>(TileShape{})),
+                size<1>(ClusterShape{})); // mcast along N mode for this M load, if any
+            return {tma_load_a, tma_load_b, tma_load_aux, args.scale_d0, args.scale_d1, args.mma_promotion_interval};
+        }
+        else
+        {
+            auto ptr_Aux = reinterpret_cast<ElementB const*>(args.ptr_B1);
+            Tensor tensor_aux = make_tensor(ptr_Aux, make_layout(make_shape(N, K, L), args.dB));
+            typename Params::TMA_Aux tma_load_aux = make_tma_copy(GmemTiledCopyB{}, tensor_aux,
+                SmemLayoutB{}(_, _, cute::Int<0>{}), make_shape(shape<1>(TileShape{}), shape<2>(TileShape{})),
+                size<0>(ClusterShape{})); // mcast along M mode for this N load, if any
+            return {tma_load_a, tma_load_b, tma_load_aux, args.scale_d0, args.scale_d1, args.mma_promotion_interval};
+        }
     }
 
     template <class ProblemShape>
@@ -258,10 +289,20 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
         Tensor gA_mkl = local_tile(mA_mkl, TileShape{}, make_coord(_, _, _), Step<_1, X, _1>{}); // (BLK_M,BLK_K,m,k,l)
         Tensor gB_nkl = local_tile(mB_nkl, TileShape{}, make_coord(_, _, _), Step<X, _1, _1>{}); // (BLK_N,BLK_K,n,k,l)
 
-        Tensor mAux_xkl = mainloop_params.tma_load_aux.get_tma_tensor(make_shape(N, K, L)); // (n,k,l)
-        Tensor gAux_xkl
-            = local_tile(mAux_xkl, TileShape{}, make_coord(_, _, _), Step<X, _1, _1>{});    // (BLK_N,BLK_K,n,k,l)
-        return cute::make_tuple(gA_mkl, gB_nkl, gAux_xkl);
+        if constexpr (SwapAB)
+        {
+            Tensor mAux_xkl = mainloop_params.tma_load_aux.get_tma_tensor(make_shape(M, K, L)); // (m,k,l)
+            Tensor gAux_xkl
+                = local_tile(mAux_xkl, TileShape{}, make_coord(_, _, _), Step<_1, X, _1>{});    // (BLK_M,BLK_K,m,k,l)
+            return cute::make_tuple(gA_mkl, gB_nkl, gAux_xkl);
+        }
+        else
+        {
+            Tensor mAux_xkl = mainloop_params.tma_load_aux.get_tma_tensor(make_shape(N, K, L)); // (n,k,l)
+            Tensor gAux_xkl
+                = local_tile(mAux_xkl, TileShape{}, make_coord(_, _, _), Step<X, _1, _1>{});    // (BLK_N,BLK_K,n,k,l)
+            return cute::make_tuple(gA_mkl, gB_nkl, gAux_xkl);
+        }
     }
 
     /// Perform a collective-scoped matrix multiply-accumulate
@@ -294,13 +335,14 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
 
             auto block_tma_a = mainloop_params.tma_load_a.get_slice(cluster_local_block_id.y);
             auto block_tma_b = mainloop_params.tma_load_b.get_slice(cluster_local_block_id.x);
-            auto block_tma_aux = mainloop_params.tma_load_aux.get_slice(cluster_local_block_id.x);
+            auto block_tma_aux = SwapAB ? mainloop_params.tma_load_aux.get_slice(cluster_local_block_id.y)
+                                        : mainloop_params.tma_load_aux.get_slice(cluster_local_block_id.x);
 
             // Partition the inputs based on the current block coordinates.
             auto [m_coord, n_coord, k_coord, l_coord] = blk_coord;
             Tensor gA = gA_mkl(_, _, m_coord, _, l_coord); // (BLK_M,BLK_K,k)
             Tensor gB = gB_nkl(_, _, n_coord, _, l_coord); // (BLK_N,BLK_K,k)
-            Tensor gAux = gAux_xkl(_, _, n_coord, _, l_coord);
+            Tensor gAux = SwapAB ? gAux_xkl(_, _, m_coord, _, l_coord) : gAux_xkl(_, _, n_coord, _, l_coord);
 
             // Applies the mapping from block_tma_a
             Tensor tAgA = block_tma_a.partition_S(gA); // (TMA,TMA_M,TMA_K,k)
@@ -336,7 +378,14 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
                 }
             }
 
-            mcast_mask_aux = mcast_mask_b;
+            if constexpr (SwapAB)
+            {
+                mcast_mask_aux = mcast_mask_a;
+            }
+            else
+            {
+                mcast_mask_aux = mcast_mask_b;
+            }
 
             // Mainloop
             CUTLASS_PRAGMA_NO_UNROLL
@@ -419,17 +468,47 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
         Tensor tCrA = thread_mma.make_fragment_A(tCsA); // (MMA,MMA_M,MMA_K,PIPE)
         Tensor tCrB = thread_mma.make_fragment_B(tCsB); // (MMA,MMA_N,MMA_K,PIPE)
 
-        auto tCsAux = thread_mma.partition_B(sAux);
-        auto tCrAux = thread_mma.make_fragment_B(tCsAux);
+        auto tCsAux = [&]() -> auto
+        {
+            if constexpr (SwapAB)
+            {
+                return thread_mma.partition_A(sAux);
+            }
+            else
+            {
+                return thread_mma.partition_B(sAux);
+            }
+        }();
+        auto tCrAux = [&]() -> auto
+        {
+            if constexpr (SwapAB)
+            {
+                return thread_mma.make_fragment_A(tCsAux);
+            }
+            else
+            {
+                return thread_mma.make_fragment_B(tCsAux);
+            }
+        }();
 
         CUTE_STATIC_ASSERT_V(size<1>(tCsA) == size<1>(accum0)); // M
         CUTE_STATIC_ASSERT_V(size<1>(tCsB) == size<2>(accum0)); // N
         CUTE_STATIC_ASSERT_V(size<2>(tCsA) == size<2>(tCsB));   // K
         CUTE_STATIC_ASSERT_V(size<3>(tCsA) == size<3>(tCsB));   // PIPE
-        CUTE_STATIC_ASSERT_V(size<1>(tCsA) == size<1>(accum1));           // M
-        CUTE_STATIC_ASSERT_V(size<1>(tCsAux) == size<2>(accum1));         // N
-        CUTE_STATIC_ASSERT_V(size<2>(tCsA) == size<2>(tCsAux));           // K
-        CUTE_STATIC_ASSERT_V(size<3>(tCsA) == size<3>(tCsAux));           // PIPE
+        if constexpr (SwapAB)
+        {
+            CUTE_STATIC_ASSERT_V(size<1>(tCsAux) == size<1>(accum1)); // M
+            CUTE_STATIC_ASSERT_V(size<1>(tCsB) == size<2>(accum1));   // N
+            CUTE_STATIC_ASSERT_V(size<2>(tCsB) == size<2>(tCsAux));   // K
+            CUTE_STATIC_ASSERT_V(size<3>(tCsB) == size<3>(tCsAux));   // PIPE
+        }
+        else
+        {
+            CUTE_STATIC_ASSERT_V(size<1>(tCsA) == size<1>(accum1));           // M
+            CUTE_STATIC_ASSERT_V(size<1>(tCsAux) == size<2>(accum1));         // N
+            CUTE_STATIC_ASSERT_V(size<2>(tCsA) == size<2>(tCsAux));           // K
+            CUTE_STATIC_ASSERT_V(size<3>(tCsA) == size<3>(tCsAux));           // PIPE
+        }
         CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sA));   // PIPE
         CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sB));   // PIPE
         CUTE_STATIC_ASSERT_V(Int<DispatchPolicy::Stages>{} == size<2>(sAux)); // PIPE
@@ -472,8 +551,16 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
                 // (V,M,K) x (V,N,K) => (V,M,N)
                 cute::gemm(
                     tiled_mma, tCrA(_, _, k_block, read_stage), tCrB(_, _, k_block, read_stage), accumulation0());
-                cute::gemm(
-                    tiled_mma, tCrA(_, _, k_block, read_stage), tCrAux(_, _, k_block, read_stage), accumulation1());
+                if constexpr (SwapAB)
+                {
+                    cute::gemm(
+                        tiled_mma, tCrAux(_, _, k_block, read_stage), tCrB(_, _, k_block, read_stage), accumulation1());
+                }
+                else
+                {
+                    cute::gemm(
+                        tiled_mma, tCrA(_, _, k_block, read_stage), tCrAux(_, _, k_block, read_stage), accumulation1());
+                }
                 tiled_mma.accumulate_ = GMMA::ScaleOut::One;
             }
             warpgroup_commit_batch();
@@ -517,8 +604,16 @@ struct CollectiveMmaGated<MainloopSm90TmaGmmaWarpSpecializedFP8<Stages, ClusterS
                 // (V,M,K) x (V,N,K) => (V,M,N)
                 cute::gemm(
                     tiled_mma, tCrA(_, _, k_block, read_stage), tCrB(_, _, k_block, read_stage), accumulation0());
-                cute::gemm(
-                    tiled_mma, tCrA(_, _, k_block, read_stage), tCrAux(_, _, k_block, read_stage), accumulation1());
+                if constexpr (SwapAB)
+                {
+                    cute::gemm(
+                        tiled_mma, tCrAux(_, _, k_block, read_stage), tCrB(_, _, k_block, read_stage), accumulation1());
+                }
+                else
+                {
+                    cute::gemm(
+                        tiled_mma, tCrA(_, _, k_block, read_stage), tCrAux(_, _, k_block, read_stage), accumulation1());
+                }
                 tiled_mma.accumulate_ = GMMA::ScaleOut::One;
             }
             warpgroup_commit_batch();

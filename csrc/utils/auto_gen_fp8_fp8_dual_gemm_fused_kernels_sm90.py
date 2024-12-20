@@ -57,7 +57,7 @@ def get_dual_gemm_candidate_configs(sm):
     )
     EpilogueSchedule = ("TmaWarpSpecialized", "TmaWarpSpecializedCooperative")
     for act_tag in [
-        ("swiglu", "ReLu"),
+        ("swiglu", "SiLu"),
         ("geglu", "GELU"),
     ]:
         candidate_configs.extend([(hasbias, act_tag, tiles, KernelSchedule, EpilogueSchedule)])
@@ -194,7 +194,7 @@ T get_relative_best(nlohmann::json* json_data,
     }
 }
 
-bool fp8_fp8_dual_gemm_scale_bias_act_sm{sm}(DualGemmEpilogueAllParams params) {
+bool fp8_fp8_dual_gemm_scale_bias_act(DualGemmEpilogueAllParams params) {
   if (dual_gemm_type_map.find(params.fuse_gemm_config) == dual_gemm_type_map.end()) {
     throw std::runtime_error("fp8 dual gemm_fused config is invalid.");
   }
@@ -269,7 +269,7 @@ bool fp8_fp8_dual_gemm_scale_bias_act_sm{sm}(DualGemmEpilogueAllParams params) {
     best_config = get_relative_best<std::string>(config_json, mnk_string, M);
 
     if (dual_gemm_config_map.find(best_config) == dual_gemm_config_map.end()) {
-        throw std::runtime_error("This config'kernel not be generate, please check generate_code_gemm_fused_kernels.py and re-generate.");
+        throw std::runtime_error("This config'kernel not be generate, please check auto_gen_fp8_fp8_dual_gemm_fused_kernels.py and re-generate.");
     } else {
         kernel_id = dual_gemm_config_map[best_config];
     }
@@ -498,7 +498,8 @@ if __name__ == "__main__":
     archs = args.cuda_arch
     inputs_type = ("float8_e4m3fn", "float8_e5m2")
     biases_type = (
-        "float16",
+        "None",
+        # "float16",
         # "bfloat16",
     )
     sm_dict = {"90": "cutlass::arch::Sm90"}

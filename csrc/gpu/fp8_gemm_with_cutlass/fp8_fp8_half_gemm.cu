@@ -164,11 +164,8 @@ std::vector<paddle::Tensor> cutlass_fp8_fp8_half_gemm(
                                         bias_data,
                                         bias_dims,
                                         fuse_gemm_config};
-        if (sm_version == 89){
-          fp8_fp8_gemm_scale_bias_act(params);
-        }else{
-          fp8_fp8_gemm_scale_bias_act_sm90(params);
-        }
+
+        fp8_fp8_gemm_scale_bias_act(params);
     }
   return {out};
 }
