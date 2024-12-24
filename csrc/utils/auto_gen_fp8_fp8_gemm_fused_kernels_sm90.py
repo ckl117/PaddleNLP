@@ -30,30 +30,25 @@ def get_candidate_tiles():
             ("<_64, _64, _128>", "<_1, _1, _1>"),
             ("<_64, _64, _128>", "<_1, _2, _1>"),
             ("<_64, _64, _128>", "<_2, _1, _1>"),
-            ("<_64, _64, _128>", "<_2, _2, _1>"),
             ("<_64, _64, _64>", "<_1, _1, _1>"),
             ("<_64, _64, _64>", "<_1, _2, _1>"),
             ("<_64, _64, _64>", "<_2, _1, _1>"),
-            ("<_64, _64, _64>", "<_2, _2, _1>"),
             ("<_64, _128, _128>", "<_1, _2, _1>"),
-            ("<_64, _128, _128>", "<_2, _2, _1>"),
-            ("<_64, _128, _128>", "<_2, _4, _1>"),
-            ("<_64, _128, _128>", "<_1, _4, _1>"),
-            ("<_64, _128, _128>", "<_4, _1, _1>"),
             ("<_64, _128, _128>", "<_1, _1, _1>"),
-            ("<_128, _128, _128>", "<_1, _4, _1>"),
-            ("<_128, _128, _64>", "<_2, _2, _1>"),
             ("<_128, _128, _64>", "<_2, _1, _1>"),
-            ("<_128, _128, _256>", "<_1, _2, _1>"),
-            ("<_128, _128, _128>", "<_4, _1, _1>"),
-            ("<_128, _128, _128>", "<_2, _4, _1>"),
-            ("<_128, _128, _128>", "<_1, _2, _1>"),
-            ("<_128, _128, _128>", "<_1, _1, _1>"),
             ("<_256, _128, _128>", "<_1, _2, _1>"),
-            ("<_256, _128, _128>", "<_2, _4, _1>"),
             ("<_256, _128, _128>", "<_1, _1, _1>"),
-            ("<_256, _128, _128>", "<_1, _4, _1>"),
-            ("<_256, _128, _128>", "<_4, _1, _1>"),
+            # The following configurations are rarely selected in Qwen2-7B-model.
+            # ("<_256, _128, _128>", "<_4, _1, _1>"),
+            # ("<_256, _128, _128>", "<_1, _4, _1>"),
+            # ("<_256, _128, _128>", "<_2, _4, _1>"),
+            # ("<_128, _128, _256>", "<_1, _2, _1>"),
+            # ("<_128, _128, _128>", "<_4, _1, _1>"),
+            # ("<_128, _128, _128>", "<_2, _4, _1>"),
+            # ("<_128, _128, _128>", "<_1, _2, _1>"),
+            # ("<_128, _128, _128>", "<_1, _1, _1>"),
+            # ("<_128, _128, _128>", "<_1, _4, _1>"),
+            # ("<_128, _128, _64>", "<_2, _2, _1>"),
         ]
     )
 
@@ -81,13 +76,29 @@ def get_candidate_configs(sm):
     return candidate_configs
 
 
-def check_config_valid(tile_shape, kernel_schedule, epilogue_schedule):
+def get_shape_str(tile_shape):
     blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_shape]
     blocks = [elem.strip("_") for elem in blocks]
+    clusters = [elem.strip("_") for elem in clusters]
+    return blocks, clusters
+
+
+def check_config_valid(tile_shape, kernel_schedule, epilogue_schedule):
+    blocks, clusters = get_shape_str(tile_shape)
     if int(blocks[0]) < 128 and kernel_schedule == "KernelTmaWarpSpecializedCooperativeFP8FastAccum":
         return False
     if "Cooperative" in kernel_schedule and "Cooperative" not in epilogue_schedule:
         return False
+    if (
+        tile_shape[0] == "<_256, _128, _128>"
+        and "Cooperative" not in kernel_schedule
+        and "Cooperative" not in epilogue_schedule
+    ):
+        return False
+    # flag1 = (int(blocks[0]) == 64 and kernel_schedule == "KernelTmaWarpSpecializedPingpongFP8FastAccum" and epilogue_schedule == "TmaWarpSpecialized")
+    # flag2 = (int(blocks[0]) != 64 and kernel_schedule == "KernelTmaWarpSpecializedCooperativeFP8FastAccum" and epilogue_schedule == "TmaWarpSpecializedCooperative")
+    # if not (flag1 or flag2):
+    #     return False
     return True
 
 
@@ -392,9 +403,7 @@ def generate_launch_gemm_cus(
     head_path = os.path.join(generate_dir, f"launch_gemm_kernel_sm{sm[-2:]}.h")
     head_all_code = LaunchGemmHead
     for tile_config in tiles:
-        blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_config]
-        blocks = [elem.strip("_") for elem in blocks]
-        clusters = [elem.strip("_") for elem in clusters]
+        blocks, clusters = get_shape_str(tile_config)
         gemm_config_str_0 = f"tile{blocks[0]}x{blocks[1]}x{blocks[2]}_cluster{clusters[0]}x{clusters[1]}x{clusters[2]}"
         for kernel_schedule in KernelSchedule:
             gemm_config_str_1 = gemm_config_str_0 + f"_{kernel_schedule}"
@@ -413,9 +422,7 @@ def generate_launch_gemm_cus(
         f.close()
 
     for tile_shape in tiles:
-        blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_shape]
-        blocks = [elem.strip("_") for elem in blocks]
-        clusters = [elem.strip("_") for elem in clusters]
+        blocks, clusters = get_shape_str(tile_shape)
         gemm_config_str_0 = f"tile{blocks[0]}x{blocks[1]}x{blocks[2]}_cluster{clusters[0]}x{clusters[1]}x{clusters[2]}"
         for kernel_schedule in KernelSchedule:
             gemm_config_str_1 = gemm_config_str_0 + f"_{kernel_schedule}"
@@ -503,9 +510,7 @@ def generate_dispatch_gemm_cu(inputs_type: (str), outputs_type: (str), fuse_gemm
     all_code += SubstituteTemplate(code_part4, {"sm": sm[-2:]})
     tile_id = 0
     for tile_shape in tiles:
-        blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_shape]
-        blocks = [elem.strip("_") for elem in blocks]
-        clusters = [elem.strip("_") for elem in clusters]
+        blocks, clusters = get_shape_str(tile_shape)
         gemm_config_str_0 = f"tile{blocks[0]}x{blocks[1]}x{blocks[2]}_cluster{clusters[0]}x{clusters[1]}x{clusters[2]}"
         for kernel_schedule in KernelSchedule:
             gemm_config_str_1 = gemm_config_str_0 + f"_{kernel_schedule}"
@@ -528,7 +533,10 @@ def generate_dispatch_gemm_cu(inputs_type: (str), outputs_type: (str), fuse_gemm
 if __name__ == "__main__":
     args = parse_args()
     archs = args.cuda_arch
-    inputs_type = ("float8_e4m3fn", "float8_e5m2")
+    inputs_type = (
+        "float8_e4m3fn",
+        "float8_e5m2",
+    )
     outputs_type = ("float16", "bfloat16")
     sm_dict = {"90": "cutlass::arch::Sm90"}
 

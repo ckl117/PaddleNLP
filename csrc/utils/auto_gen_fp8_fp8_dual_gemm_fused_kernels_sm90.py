@@ -27,15 +27,15 @@ def get_candidate_tiles():
         ("<_128, _16, _128>"),
         ("<_128, _32, _128>"),
         ("<_128, _64, _128>"),
-        ("<_128, _128, _128>"),
+        # ("<_128, _128, _128>"),
     ]
     cluster_shape = [
         ("<_1, _1, _1>"),
         ("<_2, _1, _1>"),
         ("<_1, _2, _1>"),
-        ("<_2, _2, _1>"),
-        ("<_1, _8, _1>"),
-        ("<_8, _1, _1>"),
+        # ("<_2, _2, _1>"),
+        # ("<_1, _8, _1>"),
+        # ("<_8, _1, _1>"),
     ]
     base_configs = [(x, y) for x in cta_shape for y in cluster_shape]
 
@@ -65,12 +65,20 @@ def get_dual_gemm_candidate_configs(sm):
     return candidate_configs
 
 
-def check_config_valid(tile_shape, kernel_schedule, epilogue_schedule):
+def get_shape_str(tile_shape):
     blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_shape]
     blocks = [elem.strip("_") for elem in blocks]
+    clusters = [elem.strip("_") for elem in clusters]
+    return blocks, clusters
+
+
+def check_config_valid(tile_shape, kernel_schedule, epilogue_schedule):
+    blocks, clusters = get_shape_str(tile_shape)
     if int(blocks[0]) < 128 and kernel_schedule == "KernelTmaWarpSpecializedCooperativeFP8FastAccum":
         return False
     if "Cooperative" in kernel_schedule and "Cooperative" not in epilogue_schedule:
+        return False
+    if tile_shape[0] == "<_128, _128, _128>" and kernel_schedule == "KernelTmaWarpSpecializedPingpongFP8FastAccum":
         return False
     return True
 
@@ -184,12 +192,10 @@ T get_relative_best(nlohmann::json* json_data,
     if (json_data->contains(target_key)) {
         return json_data->at(target_key);
     } else {
-        if (m <= 64){
-            return "<_64, _64, _128>, <_1, _8, _1>, KernelTmaWarpSpecializedPingpongFP8FastAccum, TmaWarpSpecialized";
-        }else if(m <= 128){
-            return "<_64, _128, _128>, <_2, _1, _1>, KernelTmaWarpSpecializedPingpongFP8FastAccum, TmaWarpSpecialized";
+        if (m <= 6400){
+            return "<_64, _32, _128>, <_1, _1, _1>, KernelTmaWarpSpecializedPingpongFP8FastAccum, TmaWarpSpecialized";
         }else{
-            return "<_128, _128, _128>, <_2, _1, _1>, KernelTmaWarpSpecializedPingpongFP8FastAccum, TmaWarpSpecialized";
+            return "<_64, _64, _128>, <_1, _1, _1>, KernelTmaWarpSpecializedPingpongFP8FastAccum, TmaWarpSpecialized";
         }
     }
 }
@@ -361,7 +367,7 @@ def generate_launch_dual_gemm_cus(
     head_path = os.path.join(generate_dir, f"launch_dual_gemm_kernel_sm{sm[-2:]}.h")
     head_all_code = LaunchGemmHead
     for tile_config in tiles:
-        blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_config]
+        blocks, clusters = get_shape_str(tile_config)
         blocks = [elem.strip("_") for elem in blocks]
         clusters = [elem.strip("_") for elem in clusters]
         gemm_config_str_0 = f"tile{blocks[0]}x{blocks[1]}x{blocks[2]}_cluster{clusters[0]}x{clusters[1]}x{clusters[2]}"
@@ -382,9 +388,7 @@ def generate_launch_dual_gemm_cus(
         f.close()
 
     for tile_shape in tiles:
-        blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_shape]
-        blocks = [elem.strip("_") for elem in blocks]
-        clusters = [elem.strip("_") for elem in clusters]
+        blocks, clusters = get_shape_str(tile_shape)
         gemm_config_str_0 = f"tile{blocks[0]}x{blocks[1]}x{blocks[2]}_cluster{clusters[0]}x{clusters[1]}x{clusters[2]}"
         for kernel_schedule in KernelSchedule:
             gemm_config_str_1 = gemm_config_str_0 + f"_{kernel_schedule}"
@@ -472,9 +476,7 @@ def generate_dispatch_dual_gemm_cu(inputs_type: (str), biases_type: (str), fuse_
     all_code += SubstituteTemplate(code_part4, {"sm": sm[-2:]})
     tile_id = 0
     for tile_shape in tiles:
-        blocks, clusters = [s.replace(" ", "").strip("<>").split(",") for s in tile_shape]
-        blocks = [elem.strip("_") for elem in blocks]
-        clusters = [elem.strip("_") for elem in clusters]
+        blocks, clusters = get_shape_str(tile_shape)
         gemm_config_str_0 = f"tile{blocks[0]}x{blocks[1]}x{blocks[2]}_cluster{clusters[0]}x{clusters[1]}x{clusters[2]}"
         for kernel_schedule in KernelSchedule:
             gemm_config_str_1 = gemm_config_str_0 + f"_{kernel_schedule}"
@@ -498,9 +500,8 @@ if __name__ == "__main__":
     archs = args.cuda_arch
     inputs_type = ("float8_e4m3fn", "float8_e5m2")
     biases_type = (
-        "None",
-        # "float16",
-        # "bfloat16",
+        "float16",
+        "bfloat16",
     )
     sm_dict = {"90": "cutlass::arch::Sm90"}
 
