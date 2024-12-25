@@ -151,7 +151,7 @@ fp8_auto_gen_directory = "gpu/cutlass_kernels/fp8_gemm_fused/autogen"
 if os.path.isdir(fp8_auto_gen_directory):
     shutil.rmtree(fp8_auto_gen_directory)
 
-if cc == 89 and cuda_version == 12.4:
+if cc == 89 and cuda_version >= 12.4:
     os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels.py --cuda_arch 89")
     os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels.py --cuda_arch 89")
     sources += find_end_files(fp8_auto_gen_directory, ".cu")
