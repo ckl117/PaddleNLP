@@ -115,17 +115,17 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
   //
 
   /// Initialization
-  StrideA stride_A{params.lda, cute::Int<1>{}, 0};
-  StrideB stride_B{params.ldb, cute::Int<1>{}, 0};
+  StrideA stride_A{params.lda, cute::Int<1>{}, params.M * params.lda};
+  StrideB stride_B{params.ldb, cute::Int<1>{}, params.N * params.ldb};
   StrideC stride_C{0, cute::Int<1>{}, 0};
-  StrideD stride_D{params.ldd, cute::Int<1>{}, 0};
+  StrideD stride_D{params.ldd, cute::Int<1>{}, params.ldd * params.M};
 
   auto a_ptr = reinterpret_cast<ElementA*>(const_cast<void*>(params.A));
   auto b_ptr = reinterpret_cast<ElementB*>(const_cast<void*>(params.B));
   auto c_ptr = reinterpret_cast<ElementC*>(const_cast<void*>(params.bias));
   auto d_ptr = reinterpret_cast<ElementD*>(params.D);
 
-  ProblemShapeType problem_size = ProblemShapeType{params.M, params.N, params.K, 1};
+  ProblemShapeType problem_size = ProblemShapeType{params.M, params.N, params.K, params.batch_count};
 
   typename Gemm::Arguments arguments{
     cutlass::gemm::GemmUniversalMode::kGemm,
