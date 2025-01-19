@@ -16,6 +16,7 @@
 
 #include "fp8_common.h"  // NOLINT
 #include "fp8_gemm_fused/fuse_gemm_per_block_template_3x.h"
+#include "fp8_gemm_fused/fp8_fp8_gemm_scale_bias_act.h"
 
 std::vector<paddle::Tensor> cutlass_fp8_gemm_per_block_fused(
     const paddle::Tensor& x,
@@ -143,16 +144,16 @@ std::vector<paddle::Tensor> cutlass_fp8_gemm_per_block_fused(
                                     0,
                                     x_scale_ptr,
                                     y_scale_ptr};
-
-    dispatch_fuse_gemm_per_block<phi::dtype::float8_e4m3fn,
-                                 phi::dtype::float16,
-                                 false,
-                                 cutlass::epilogue::thread::Identity,
-                                 Shape<_128, _128, _128>,
-                                 Shape<_1, _2, _1>,
-                                 cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum<1>,
-                                 cutlass::epilogue::TmaWarpSpecializedCooperative,
-                                 cutlass::arch::Sm90>(params);
+    fp8_per_block_gemm_scale_bias_act(params);
+    // dispatch_fuse_gemm_per_block<phi::dtype::float8_e4m3fn,
+    //                              phi::dtype::float16,
+    //                              false,
+    //                              cutlass::epilogue::thread::Identity,
+    //                              Shape<_128, _128, _128>,
+    //                              Shape<_1, _2, _1>,
+    //                              cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum<1>,
+    //                              cutlass::epilogue::TmaWarpSpecializedCooperative,
+    //                              cutlass::arch::Sm90>(params);
   return {out};
 }
 
