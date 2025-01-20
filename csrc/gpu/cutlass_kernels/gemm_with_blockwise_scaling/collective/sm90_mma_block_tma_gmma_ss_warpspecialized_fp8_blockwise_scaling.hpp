@@ -33,6 +33,8 @@
 
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/dispatch_policy.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/fp8_accumulation_block.hpp"
 #include "cutlass/trace.h"
 #include "cutlass/numeric_types.h"
 
@@ -73,7 +75,7 @@ template <
   class SmemCopyAtomB_,
   class TransformB_>
 struct CollectiveMmaBlock<
-    MainloopSm90TmaGmmaWarpSpecializedBlockScalingFP8<Stages, ScaleGranularityM_, ClusterShape, KernelSchedule>,
+    MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8<Stages, ScaleGranularityM_, ClusterShape, KernelSchedule>,
     TileShape_,
     ElementA_,
     StrideA_,
@@ -92,7 +94,7 @@ struct CollectiveMmaBlock<
   //
   // Type Aliases
   //
-  using DispatchPolicy = MainloopSm90TmaGmmaWarpSpecializedBlockScalingFP8<Stages, ClusterShape, KernelSchedule, ScaleGranularityM_>;
+  using DispatchPolicy = MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8<Stages, ScaleGranularityM_, ClusterShape, KernelSchedule>;
   using TileShape = TileShape_;
   using ElementA = ElementA_;
   using StrideA = StrideA_;
@@ -569,7 +571,7 @@ struct CollectiveMmaBlock<
 
     tiled_mma.accumulate_ = GMMA::ScaleOut::Zero;
 
-    GmmaFP8Accumulation accumulation(accum, mainloop_params.mma_promotion_interval, size<2>(tCrA));
+    GmmaFP8AccumulationBlock accumulation(accum, mainloop_params.mma_promotion_interval, size<2>(tCrA));
     warpgroup_fence_operand(accumulation());
     CUTLASS_PRAGMA_UNROLL
     for (int k_tile_prologue = prologue_mma_count; k_tile_prologue > 0; --k_tile_prologue)

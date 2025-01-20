@@ -96,7 +96,7 @@ private:
 
 public:
   CUTLASS_DEVICE
-  GmmaFP8Accumulation(
+  GmmaFP8AccumulationBlock(
       TensorAccum &accum,
       uint32_t accum_promotion_interval,
       uint32_t mma_count_per_mainloop_iteration)

@@ -30,7 +30,6 @@
  **************************************************************************************************/
 #pragma once
 
-#include <cute/numeric/integral_constant.hpp>
 #include <cutlass/detail/dependent_false.hpp>
 
 namespace cutlass::gemm::collective {
@@ -63,4 +62,3 @@ struct CollectiveMmaBlock {
 } // namespace cutlass::gemm::collective
 
 #include "cutlass_kernels/gemm_with_blockwise_scaling/collective/sm90_mma_block_tma_gmma_ss_warpspecialized_fp8_blockwise_scaling.hpp"
-

@@ -32,9 +32,7 @@
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 #include "cutlass/gemm/collective/collective_builder.hpp"
-#include "cutlass/gemm/collective/collective_mma_decl.hpp"
-#include "cutlass/gemm/collective/collective_mma.hpp"
-
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_mma_block.hpp"
 
 namespace cutlass::gemm::collective
 {
@@ -63,9 +61,6 @@ struct CollectiveBuilderBlock {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "cutlass/gemm/collective/collective_builder_decl.hpp"
-#include "cutlass/gemm/collective/builders/sm90_gmma_builder.inl"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/builders/sm90_gmma_builder_block.inl"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
-
-#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/builders/sm90_gmma_builder_block.inl"

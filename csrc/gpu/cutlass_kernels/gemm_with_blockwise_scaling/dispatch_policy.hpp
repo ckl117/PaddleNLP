@@ -50,7 +50,7 @@ namespace cutlass::gemm {
 template<
   int ScaleGranularityM // `ScaleGranularityM` specifies scaling granularity along M, while zero-value `ScaleGranularityM` indicates that scaling granularity is `size<0>(TileShape_MNK{})` along M.
 >
-struct KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum: KernelTmaWarpSpecializedCooperative { };
+struct KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum: KernelTmaWarpSpecializedCooperative { };
 
 
 //
@@ -63,12 +63,12 @@ template<
   int Stages_,
   int ScaleGranularityM = 1, // `ScaleGranularityM` specifies scaling granularity along M, while zero-value `ScaleGranularityM` indicates that scaling granularity is `size<0>(TileShape_MNK{})` along M.
   class ClusterShape_ = Shape<_1,_1,_1>,
-  class KernelSchedule = KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum<ScaleGranularityM>
+  class KernelSchedule = KernelTmaWarpSpecialized
 >
-struct MainloopSm90TmaGmmaWarpSpecializedBlockScalingFP8
+struct MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8
   : MainloopSm90TmaGmmaWarpSpecialized<Stages_, ClusterShape_, KernelSchedule> {
   static_assert(
-    cute::is_same_v<KernelSchedule, KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum<ScaleGranularityM>>,
+    cute::is_same_v<KernelSchedule, KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum<ScaleGranularityM>>,
     "KernelSchedule must be one of the warp specialized policies");
 };
 

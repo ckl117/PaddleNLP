@@ -38,7 +38,7 @@ template <
   template <class> typename Activation = cutlass::epilogue::thread::Identity,
   typename TileShape = Shape<_128, _128, _128>,
   typename ClusterShape = Shape<_1, _2, _1>,
-  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum<1>,
+  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum<1>,
   typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecializedCooperative,
   typename SM = cutlass::arch::Sm90
 >
