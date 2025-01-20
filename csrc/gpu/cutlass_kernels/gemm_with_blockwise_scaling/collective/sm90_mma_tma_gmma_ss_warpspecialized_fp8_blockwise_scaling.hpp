@@ -34,7 +34,7 @@
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
 #include "cutlass_kernels/gemm_with_blockwise_scaling/dispatch_policy.hpp"
-#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/fp8_accumulation_block.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/fp8_accumulation.hpp"
 #include "cutlass/trace.h"
 #include "cutlass/numeric_types.h"
 

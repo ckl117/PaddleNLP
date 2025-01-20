@@ -15,10 +15,10 @@
 #include <iostream>
 
 #include "fp8_common.h"  // NOLINT
-#include "fp8_gemm_fused/fuse_gemm_per_block_template_3x.h"
+#include "fp8_gemm_fused/fuse_block_gemm_act_template_3x.h"
 #include "fp8_gemm_fused/fp8_fp8_gemm_scale_bias_act.h"
 
-std::vector<paddle::Tensor> cutlass_fp8_gemm_per_block_fused(
+std::vector<paddle::Tensor> cutlass_fp8_fp8_half_block_gemm_fused(
     const paddle::Tensor& x,
     const paddle::Tensor& x_scale,
     const paddle::Tensor& y,
@@ -144,20 +144,11 @@ std::vector<paddle::Tensor> cutlass_fp8_gemm_per_block_fused(
                                     0,
                                     x_scale_ptr,
                                     y_scale_ptr};
-    fp8_per_block_gemm_scale_bias_act(params);
-    // dispatch_fuse_gemm_per_block<phi::dtype::float8_e4m3fn,
-    //                              phi::dtype::float16,
-    //                              false,
-    //                              cutlass::epilogue::thread::Identity,
-    //                              Shape<_128, _128, _128>,
-    //                              Shape<_1, _2, _1>,
-    //                              cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8BlockScaledAccum<1>,
-    //                              cutlass::epilogue::TmaWarpSpecializedCooperative,
-    //                              cutlass::arch::Sm90>(params);
+    fp8_fp8_block_gemm_scale_bias_act(params);
   return {out};
 }
 
-std::vector<std::vector<int64_t>> CutlassFp8GemmPerBlockFusedInferShape(
+std::vector<std::vector<int64_t>> CutlassFp8Fp8HalfBlockGemmFusedInferShape(
     const std::vector<int64_t>& x_shape,
     const std::vector<int64_t>& x_scale_shape,
     const std::vector<int64_t>& y_shape,
@@ -171,10 +162,29 @@ std::vector<std::vector<int64_t>> CutlassFp8GemmPerBlockFusedInferShape(
                       "The rank of input X and Y should be equal, but received X's rank is %d, Y's rank is %d.",
                       x_shape.size(),
                       y_shape.size()));
-      
+  PADDLE_ENFORCE_EQ(x_shape.size(),
+                    x_scale_shape.size(),
+                    phi::errors::InvalidArgument(
+                      "The rank of input X and X_scale should be equal, but received X's rank is %d, X_scale's rank is %d.",
+                      x_shape.size(),
+                      x_scale_shape.size()));
+  PADDLE_ENFORCE_EQ(y_shape.size(),
+                    y_scale_shape.size(),
+                    phi::errors::InvalidArgument(
+                      "The rank of input Y and Y_scale should be equal, but received Y's rank is %d, Y_scale's rank is %d.",
+                      y_shape.size(),
+                      y_scale_shape.size()));
   int rank = x_shape.size();
   int M = 0;
   int N = 0;
+  if (x_shape[rank - 1] != x_scale_shape[rank - 1] * 128){
+    PADDLE_THROW(phi::errors::Fatal(
+        "cutlass_fp8_fp8_half_block_gemm_fused only support x_scale's dim[-1] * 128 = x's dim[-1]."));
+  }
+  if ((y_shape[rank - 1] != y_scale_shape[rank - 1] * 128) || (y_shape[rank - 2] != y_scale_shape[rank - 2] * 128)){
+    PADDLE_THROW(phi::errors::Fatal(
+        "cutlass_fp8_fp8_half_block_gemm_fused only support input y_scale's dim[-2:] * 128 = y's dim[-2:]."));
+  }
 
   if (!trans_x) {
     M = x_shape[rank - 2];
@@ -193,7 +203,7 @@ std::vector<std::vector<int64_t>> CutlassFp8GemmPerBlockFusedInferShape(
   return {out_shape};
 }
 
-std::vector<paddle::DataType> CutlassFp8GemmPerBlockFusedInferDtype(
+std::vector<paddle::DataType> CutlassFp8Fp8HalfBlockGemmFusedInferDtype(
     const paddle::DataType& x_type,
     const paddle::DataType& x_scale_type,
     const paddle::DataType& y_type,
@@ -214,13 +224,13 @@ std::vector<paddle::DataType> CutlassFp8GemmPerBlockFusedInferDtype(
     return {data_type};
 }
 
-PD_BUILD_OP(cutlass_fp8_gemm_per_block_fused)
+PD_BUILD_OP(cutlass_fp8_fp8_half_block_gemm_fused)
     .Inputs({"x", "x_sacle", "y", "y_scale", paddle::Optional("bias")})
     .Attrs({"transpose_x: bool",
             "transpose_y: bool",
             "output_dtype: std::string",
             "act: std::string"})
     .Outputs({"out"})
-    .SetKernelFn(PD_KERNEL(cutlass_fp8_gemm_per_block_fused))
-    .SetInferShapeFn(PD_INFER_SHAPE(CutlassFp8GemmPerBlockFusedInferShape))
-    .SetInferDtypeFn(PD_INFER_DTYPE(CutlassFp8GemmPerBlockFusedInferDtype));
+    .SetKernelFn(PD_KERNEL(cutlass_fp8_fp8_half_block_gemm_fused))
+    .SetInferShapeFn(PD_INFER_SHAPE(CutlassFp8Fp8HalfBlockGemmFusedInferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(CutlassFp8Fp8HalfBlockGemmFusedInferDtype));

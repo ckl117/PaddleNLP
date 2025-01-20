@@ -21,8 +21,7 @@
 #include "cute/tensor.hpp"
 #include "cutlass/tensor_ref.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
-// #include "cutlass/gemm/collective/collective_builder.hpp"
-#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_builder_block.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_builder.hpp"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
 #include "cutlass/gemm/kernel/tile_scheduler_params.h"
@@ -42,7 +41,7 @@ template <
   typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecializedCooperative,
   typename SM = cutlass::arch::Sm90
 >
-bool dispatch_fuse_gemm_per_block(GemmEpilogueAllParams params){
+bool dispatch_fuse_block_gemm_c3x(GemmEpilogueAllParams params){
   using ElementA = typename std::conditional_t<std::is_same_v<InputType, phi::dtype::float8_e4m3fn>,
                                                               cutlass::float_e4m3_t,
                                                               cutlass::float_e5m2_t>;

@@ -30,35 +30,37 @@
  **************************************************************************************************/
 #pragma once
 
-#include <cutlass/detail/dependent_false.hpp>
-
-namespace cutlass::gemm::collective {
-
 /////////////////////////////////////////////////////////////////////////////////////////////////
+#include "cutlass/gemm/collective/collective_builder.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_mma.hpp"
+
+namespace cutlass::gemm::collective
+{
 
 template <
-  class DispatchPolicy,
-  class TileShape,
+  class ArchTag,
+  class OpClass,
   class ElementA,
-  class StrideA,
+  class GmemLayoutA,
+  int AlignmentA,
   class ElementB,
-  class StrideB,
-  class TiledMma,
-  class GmemTiledCopyA,
-  class SmemLayoutAtomA,
-  class SmemCopyAtomA,
-  class TransformA,
-  class GmemTiledCopyB,
-  class SmemLayoutAtomB,
-  class SmemCopyAtomB,
-  class TransformB
+  class GmemLayoutB,
+  int AlignmentB,
+  class ElementAccumulator,
+  class TileShape_MNK,
+  class ClusterShape_MNK,
+  class StageCountType,
+  class KernelScheduleType,
+  class Enable = void
 >
-struct CollectiveMmaBlock {
-  static_assert(cutlass::detail::dependent_false<ElementA>, "Could not find a mainloop specialization.");
+struct CollectiveBuilderBlock {
+  static_assert(sizeof(ElementA) == 0, "Could not build a collective for given parameters.");
 };
+
+}// namespace cutlass::gemm::collective
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-} // namespace cutlass::gemm::collective
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/builders/sm90_gmma_builder.inl"
 
-#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/sm90_mma_block_tma_gmma_ss_warpspecialized_fp8_blockwise_scaling.hpp"
+/////////////////////////////////////////////////////////////////////////////////////////////////
