@@ -68,8 +68,8 @@ def get_candidate_configs(sm):
     EpilogueSchedule = ("TmaWarpSpecialized", "TmaWarpSpecializedCooperative")
     for act_tag in [
         ("noact", "Identity"),
-        ("relu", "ReLu"),
-        ("gelu", "GELU"),
+        # ("relu", "ReLu"),
+        # ("gelu", "GELU"),
     ]:
         candidate_configs.extend([(hasbias, act_tag, tiles, KernelSchedule, EpilogueSchedule)])
 
@@ -535,7 +535,7 @@ if __name__ == "__main__":
     archs = args.cuda_arch
     inputs_type = (
         "float8_e4m3fn",
-        "float8_e5m2",
+        # "float8_e5m2",
     )
     outputs_type = ("float16", "bfloat16")
     sm_dict = {"90": "cutlass::arch::Sm90"}

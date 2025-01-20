@@ -21,7 +21,8 @@
 #include "cute/tensor.hpp"
 #include "cutlass/tensor_ref.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
-#include "cutlass/gemm/collective/collective_builder.hpp"
+// #include "cutlass/gemm/collective/collective_builder.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_builder_block.hpp"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
 #include "cutlass/gemm/kernel/tile_scheduler_params.h"
@@ -88,7 +89,7 @@ bool dispatch_fuse_gemm_per_block(GemmEpilogueAllParams params){
       FusionOperation
     >::CollectiveOp;
 
-  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
+  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilderBlock<
       SM, cutlass::arch::OpClassTensorOp,
       ElementA, LayoutA, AlignmentA,
       ElementB, LayoutB, AlignmentB,
