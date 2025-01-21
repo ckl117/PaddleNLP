@@ -40,6 +40,7 @@ template <typename InType, typename OutType>
 __global__ void DynamicQuantKernel(const InType* input,
                                    const int64_t numel,
                                    const float quant_max_bound,
+                                   const float quant_min_bound,
                                    OutType* output,
                                    float* out_scale_data) {
 
@@ -65,17 +66,22 @@ __global__ void DynamicQuantKernel(const InType* input,
   max_val = WarpReduceAbsMax(max_val, 0xffffffff);
   
   if (threadIdx.x == 0) {
-    smem[0] = max_val / quant_max_bound;
+    smem[0] = max(max_val, 0.000001) / quant_max_bound;
   }
+  __syncthreads();
   float scale = smem[0];
   out_scale_data[block_idx] = scale;
-  output[idx] = static_cast<OutType>(in_val / scale);
+  float quant_value = in_val / scale;
+  quant_value = quant_value > quant_max_bound ? quant_max_bound : quant_value;
+  quant_value = quant_value < quant_min_bound ? quant_min_bound : quant_value;
+  output[idx] = static_cast<OutType>(quant_value);
 }
 
 template <paddle::DataType InType>
 std::vector<paddle::Tensor> LaunchDynamicQuant(const paddle::Tensor& x,
                                                 const int block_size,
-                                                const float quant_max_bound) {
+                                                const float quant_max_bound,
+                                                const float quant_min_bound) {
     
     typedef PDTraits<InType> in_traits;
     typedef typename in_traits::DataType InDataType;
@@ -114,6 +120,7 @@ std::vector<paddle::Tensor> LaunchDynamicQuant(const paddle::Tensor& x,
     DynamicQuantKernel<InDataType, OutDataType><<<block_per_grid, block_size, 0, stream>>>(reinterpret_cast<const InDataType*>(x.data<in_data_t>()),
                             numel,
                             quant_max_bound,
+                            quant_min_bound,
                             reinterpret_cast<OutDataType*>(out.data<out_data_t>()),
                             reinterpret_cast<float*>(scale_out.data<float>()));
     return {out, scale_out};
@@ -123,14 +130,15 @@ std::vector<paddle::Tensor> LaunchDynamicQuant(const paddle::Tensor& x,
 
 std::vector<paddle::Tensor> DynamicQuant(const paddle::Tensor& x,
                                         const int block_size,
-                                        const float quant_max_bound) {
+                                        const float quant_max_bound,
+                                        const float quant_min_bound) {
     
     if(x.dtype() == paddle::DataType::FLOAT32){
-        return LaunchDynamicQuant<paddle::DataType::FLOAT32>(x, block_size, quant_max_bound);
+        return LaunchDynamicQuant<paddle::DataType::FLOAT32>(x, block_size, quant_max_bound, quant_min_bound);
     }else if(x.dtype() == paddle::DataType::FLOAT16){
-        return LaunchDynamicQuant<paddle::DataType::FLOAT16>(x, block_size, quant_max_bound);
+        return LaunchDynamicQuant<paddle::DataType::FLOAT16>(x, block_size, quant_max_bound, quant_min_bound);
     }else if(x.dtype() == paddle::DataType::BFLOAT16){
-        return LaunchDynamicQuant<paddle::DataType::BFLOAT16>(x, block_size, quant_max_bound);
+        return LaunchDynamicQuant<paddle::DataType::BFLOAT16>(x, block_size, quant_max_bound, quant_min_bound);
     }else{
         PD_THROW("Unsupported data type.");
     }
@@ -160,7 +168,8 @@ PD_BUILD_OP(dynamic_quant)
     .Inputs({"x"})
     .Outputs({"output", "scale"})
     .Attrs({"block_size: int",
-            "quant_max_bound: float"})
+            "quant_max_bound: float",
+            "quant_min_bound: float"})
     .SetKernelFn(PD_KERNEL(DynamicQuant))
     .SetInferShapeFn(PD_INFER_SHAPE(DynamicQuantInferShape))
     .SetInferDtypeFn(PD_INFER_DTYPE(DynamicQuantInferDtype));
