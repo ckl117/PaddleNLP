@@ -16,15 +16,17 @@
 #include "fp8_common.h"
 
 #include "cutlass/cutlass.h"
-#include "cutlass/epilogue/collective/default_epilogue.hpp"
-#include "cutlass/epilogue/thread/linear_combination.h"
+#include "cutlass/numeric_types.h"
+
+#include "cute/tensor.hpp"
+#include "cutlass/tensor_ref.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
-#include "cutlass/gemm/collective/collective_builder.hpp"
-#include "cutlass/epilogue/collective/collective_builder.hpp"
+#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_builder.hpp"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
-#include "cutlass/gemm/kernel/tile_scheduler.hpp"
-#include "cutlass/util/packed_stride.hpp"
+#include "cutlass/gemm/kernel/tile_scheduler_params.h"
+#include "cutlass/epilogue/dispatch_policy.hpp"
+#include "cutlass/epilogue/collective/collective_builder.hpp"
 
 using namespace cute;
 
@@ -34,12 +36,12 @@ template <
   bool hasbias = false,
   template <class> typename Activation = cutlass::epilogue::thread::Identity,
   typename TileShape = Shape<_128, _128, _128>,
-  typename ClusterShape = Shape<_2, _1, _1>,
-  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedPingpongFP8FastAccum,
-  typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecialized,
+  typename ClusterShape = Shape<_1, _2, _1>,
+  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum<1>,
+  typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecializedCooperative,
   typename SM = cutlass::arch::Sm90
 >
-bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
+bool dispatch_fuse_block_gemm_c3x(GemmEpilogueAllParams params){
   using ElementA = typename std::conditional_t<std::is_same_v<InputType, phi::dtype::float8_e4m3fn>,
                                                               cutlass::float_e4m3_t,
                                                               cutlass::float_e5m2_t>;
@@ -51,6 +53,9 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
         hasbias,
         ElementD,
         void>;
+  
+  constexpr int ScaleMsPerTile = size<0>(TileShape{});
+  constexpr int ScaleGranularityM = size<0>(TileShape{}) / ScaleMsPerTile;
 
   using LayoutA = cutlass::layout::RowMajor;
   using LayoutB = cutlass::layout::ColumnMajor;
@@ -83,7 +88,7 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
       FusionOperation
     >::CollectiveOp;
 
-  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
+  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilderBlock<
       SM, cutlass::arch::OpClassTensorOp,
       ElementA, LayoutA, AlignmentA,
       ElementB, LayoutB, AlignmentB,
@@ -121,7 +126,9 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
   StrideD stride_D{params.ldd, cute::Int<1>{}, params.ldd * params.M};
 
   auto a_ptr = reinterpret_cast<ElementA*>(const_cast<void*>(params.A));
+  auto a_scale_ptr = reinterpret_cast<float*>(const_cast<void*>(params.A_scale));
   auto b_ptr = reinterpret_cast<ElementB*>(const_cast<void*>(params.B));
+  auto b_scale_ptr = reinterpret_cast<float*>(const_cast<void*>(params.B_scale));
   auto c_ptr = reinterpret_cast<ElementC*>(const_cast<void*>(params.bias));
   auto d_ptr = reinterpret_cast<ElementD*>(params.D);
 
@@ -130,7 +137,8 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
   typename Gemm::Arguments arguments{
     cutlass::gemm::GemmUniversalMode::kGemm,
     problem_size,
-    {a_ptr, stride_A, b_ptr, stride_B},
+    {a_ptr, stride_A, b_ptr, stride_B,
+    4, a_scale_ptr, b_scale_ptr},
     {{params.scale}, // epilogue.thread
       c_ptr, stride_C, d_ptr, stride_D}
   };
