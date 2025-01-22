@@ -75,7 +75,7 @@ template <
   class SmemCopyAtomB_,
   class TransformB_>
 struct CollectiveMmaBlock<
-    MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8<Stages, ScaleGranularityM_, ClusterShape, KernelSchedule>,
+    MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8<Stages, ClusterShape, KernelSchedule, ScaleGranularityM_>,
     TileShape_,
     ElementA_,
     StrideA_,
@@ -94,11 +94,11 @@ struct CollectiveMmaBlock<
   //
   // Type Aliases
   //
-  using DispatchPolicy = MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8<Stages, ScaleGranularityM_, ClusterShape, KernelSchedule>;
+  using DispatchPolicy = MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8<Stages, ClusterShape, KernelSchedule, ScaleGranularityM_>;
   using TileShape = TileShape_;
   using ElementA = ElementA_;
   using StrideA = StrideA_;
-  using ElementB = ElementB_;
+  using ElementB = ElementB_; 
   using StrideB = StrideB_;
   using TiledMma = TiledMma_;
   using ElementAccumulator = typename TiledMma::ValTypeC;

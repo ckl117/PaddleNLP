@@ -135,3 +135,4 @@ autogen/
 
 # cutlass kernel
 !csrc/gpu/cutlass_kernels/gemm/collective/builders
+!csrc/gpu/cutlass_kernels/gemm_with_blockwise_scaling/collective/builders

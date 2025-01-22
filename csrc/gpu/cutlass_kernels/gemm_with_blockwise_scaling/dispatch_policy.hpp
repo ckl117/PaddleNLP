@@ -61,9 +61,9 @@ struct KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum: KernelTmaWar
 // For FP8 kernels with Block Scaling
 template<
   int Stages_,
-  int ScaleGranularityM = 1, // `ScaleGranularityM` specifies scaling granularity along M, while zero-value `ScaleGranularityM` indicates that scaling granularity is `size<0>(TileShape_MNK{})` along M.
   class ClusterShape_ = Shape<_1,_1,_1>,
-  class KernelSchedule = KernelTmaWarpSpecialized
+  class KernelSchedule = KernelTmaWarpSpecialized,
+  int ScaleGranularityM = 1 // `ScaleGranularityM` specifies scaling granularity along M, while zero-value `ScaleGranularityM` indicates that scaling granularity is `size<0>(TileShape_MNK{})` along M.
 >
 struct MainloopSm90TmaGmmaWarpSpecializedGroupBlockScalingFP8
   : MainloopSm90TmaGmmaWarpSpecialized<Stages_, ClusterShape_, KernelSchedule> {
