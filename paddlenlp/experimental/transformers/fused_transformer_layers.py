@@ -682,7 +682,7 @@ class FusedMultiTransformerBase(Layer):
                     q_a_layernorm_weight = self.create_parameter(
                         shape=[self.config.mla_config.q_lora_rank],
                         attr=q_a_layernorm_weight_attr,
-                        dtype=self._dtype,
+                        dtype=self._norm_weight_dtype,
                         is_bias=False,
                     )
                     q_b_proj_weight = self.create_parameter(
@@ -707,7 +707,7 @@ class FusedMultiTransformerBase(Layer):
                 kv_a_layernorm_weight = self.create_parameter(
                     shape=[self.config.mla_config.kv_lora_rank],
                     attr=kv_a_layernorm_weight_attr,
-                    dtype=self._dtype,
+                    dtype=self._norm_weight_dtype,
                     is_bias=False,
                 )
                 kv_b_proj_weight = self.create_parameter(
@@ -1227,10 +1227,6 @@ class FusedMultiTransformerBase(Layer):
                 self.quant_type if hasattr(self, "quant_type") else "None",
             )
 
-            # ffn1_biases要拆分tp的各个卡上，或者只在0卡上，省略此处reduce，减少一次reduce
-            if self.nranks > 1:
-                dist.all_reduce(ffn_out)
-
             fused_moe_out = moe_reduce(
                 ffn_out,
                 expert_scales_float,
@@ -1300,20 +1296,36 @@ class FusedMultiTransformerBase(Layer):
         return ffn2_out
 
     def pre_process(self, **kwargs):
-        seq_lens_this_time = kwargs.get("seq_lens_this_time", None)
-        bsz = seq_lens_this_time.shape[0]
-        position_ids = []
-        for i in range(bsz):
-            cur_seq_len = kwargs.get("seq_lens_encoder", None)[i]
-            if cur_seq_len > 0:
-                for j in range(cur_seq_len):
-                    position_ids.append(j)
-            else:
-                ids = kwargs.get("seq_lens_decoder", None)[i].item()
-                if ids > 0:
-                    position_ids.append(ids)
+        if self.config.mla_config.use_mla():
+            seq_lens_encoder = kwargs.get("seq_lens_encoder", None).cast("int64")
+            seq_lens_decoder = kwargs.get("seq_lens_decoder", None).cast("int64")
+            bsz = seq_lens_encoder.shape[0]
 
-        self.position_ids = position_ids
+            # 处理 Encoder 部分
+            max_len_encoder = seq_lens_encoder.max().item()
+            encoder_ids = paddle.arange(max_len_encoder).tile([bsz, 1])  # 每个批次生成完整索引
+            encoder_mask = paddle.arange(max_len_encoder).unsqueeze(0) < seq_lens_encoder  # 根据 encoder 长度生成掩码
+            encoder_ids = paddle.masked_select(encoder_ids, encoder_mask)  # 筛选有效的 Encoder 索引
+
+            # 生成批次索引用于保持顺序
+            encoder_batch_indices = paddle.repeat_interleave(
+                paddle.arange(bsz), seq_lens_encoder.squeeze(-1)
+            )  # 每个样本的索引重复对应的长度
+
+            # 处理 Decoder 部分
+            decoder_mask = seq_lens_decoder > 0  # 筛选非零 decoder 长度
+            decoder_ids = paddle.masked_select(seq_lens_decoder, decoder_mask)  # 提取非零 decoder 索引
+            decoder_batch_indices = paddle.masked_select(paddle.arange(bsz), decoder_mask.squeeze(-1))  # 提取有效的批次索引
+
+            # 合并 Encoder 和 Decoder
+            all_ids = paddle.concat([encoder_ids, decoder_ids])
+            all_batch_indices = paddle.concat([encoder_batch_indices, decoder_batch_indices])
+
+            # 根据批次索引排序，保证批次顺序
+            sorted_indices = paddle.argsort(all_batch_indices)
+            position_ids = paddle.gather(all_ids, sorted_indices)
+
+            self.position_ids = position_ids
 
     def post_process(self, **kwargs):
         time_step = kwargs.get("time_step", None)
@@ -1876,17 +1888,11 @@ class FusedMultiTransformerWeightOnly(FusedMultiTransformerBase):
             key[..., : self.config.mla_config.qk_nope_head_dim] = key_nope
             key[..., self.config.mla_config.qk_nope_head_dim :] = key_pe
 
-            # query = paddle.nn.functional.pad(query, [0, 192 - self.config.mla_config.qk_head_dim], value=0)
-            # key = paddle.nn.functional.pad(key, [0, 192 - self.config.mla_config.qk_head_dim], value=0)
-            value = paddle.nn.functional.pad(
-                value, [0, self.config.mla_config.qk_head_dim - self.config.mla_config.v_head_dim], value=0
-            )
-
             qkv_out = paddle.concat(
                 [
                     query.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
                     key.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
-                    value.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
+                    value.reshape([-1, self.num_heads * self.config.mla_config.v_head_dim]),
                 ],
                 axis=-1,
             )
