@@ -242,3 +242,14 @@ inline uint32_t get_encoder_block_shape_q() {
             encoder_block_shape_q_env == nullptr ? 64 : std::stoi(std::string(encoder_block_shape_q_env));
     return encoder_block_shape_q;
 }
+
+int nextPowerOfTwo(int v)
+{
+    --v;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    return ++v;
+}
