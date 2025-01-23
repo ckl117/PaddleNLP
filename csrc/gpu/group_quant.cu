@@ -126,7 +126,7 @@ std::vector<paddle::Tensor> LaunchGroupQuant(const paddle::Tensor& x,
                                              const float quant_min_bound) {
 
     if(fabs(quant_max_bound - 448.0f) < 0.000001){
-        LaunchGroupQuantKernel<InType, paddle::DataType::FLOAT8_E4M3FN>(x, group_size, quant_max_bound, quant_min_bound);
+        return LaunchGroupQuantKernel<InType, paddle::DataType::FLOAT8_E4M3FN>(x, group_size, quant_max_bound, quant_min_bound);
     }else{
         PD_THROW("Only supported float8_e4m3fn quantization, please set quant_max_bound=448, quant_min_bound=-448.");
     }
@@ -149,7 +149,7 @@ std::vector<paddle::Tensor> GroupQuant(const paddle::Tensor& x,
     }
 }
 
-std::vector<std::vector<int64_t>> GroupQuantInferShape(const std::vector<int64_t>& input_shape, const int group_size, const float quant_max_bound) {
+std::vector<std::vector<int64_t>> GroupQuantInferShape(const std::vector<int64_t>& input_shape, const int group_size, const float quant_max_bound,const float quant_min_bound) {
     std::vector<int64_t> scale_shape = input_shape;
     int rank = input_shape.size();
     // per tensor quant
@@ -161,12 +161,13 @@ std::vector<std::vector<int64_t>> GroupQuantInferShape(const std::vector<int64_t
     return {input_shape, scale_shape};
 }
 
-std::vector<paddle::DataType> GroupQuantInferDtype(const paddle::DataType& input_dtype, const int group_size, const float quant_max_bound) {
+std::vector<paddle::DataType> GroupQuantInferDtype(const paddle::DataType& input_dtype, const int group_size, const float quant_max_bound,const float quant_min_bound) {
     
-    if(!(fabs(quant_max_bound - 448.0f) < 0.000001)){
+    if(fabs(quant_max_bound - 448.0f) < 0.000001){
+        return {paddle::DataType::FLOAT8_E4M3FN, paddle::DataType::FLOAT32};
+    }else{
         PD_THROW("Only supported attr of quant_max_bound in ['448.0'].");
     }
-    return {paddle::DataType::FLOAT8_E4M3FN, paddle::DataType::FLOAT32};
 }
 
 PD_BUILD_OP(group_quant)

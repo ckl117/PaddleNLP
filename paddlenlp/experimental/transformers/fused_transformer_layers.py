@@ -3482,7 +3482,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         super().__init__(config)
         self.quant_type = config.quant_type
 
-        self.weight_scale_dtype = "float32"
+        self.weight_scale_dtype = self._dtype
         self.qkv_weights_scale = []
         self.linear_weights_scale = []
         self.ffn1_weights_scale = []
@@ -3501,16 +3501,21 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
 
             linear_weight_scale_attr = self.get_attr(config.linear_weight_scale_attrs, i)
             linear_weight_scale = self.create_parameter(
-                shape=[self.embed_dim],
+                shape=[i // 128 for i in self.linear_weight_shape],
                 attr=linear_weight_scale_attr,
-                dtype=self.weight_scale_dtype,
+                dtype="float32",
                 is_bias=False,
             )
 
             self.linear_weights_scale.append(linear_weight_scale)
+            self._add_parameter(linear_weight_scale)
 
     def get_weight_create_dype(self):
         return self._dtype
+
+    def init_weight_shape(self, config):
+        super().init_weight_shape(config)
+        self.linear_weight_shape = [self.embed_dim, self.num_heads * self.head_dim]
 
     def init_weight(self):
         self.qkv_weights = []
@@ -3893,7 +3898,9 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         return out_linear_out
 
     def compute_out_linear(self, fmha_out, i):
-        fmha_out_fp8, fmha_out_scale = group_quant(fmha_out, group_size=128, quant_max_bound=448, quant_min_bound=-448)
+        fmha_out_fp8, fmha_out_scale = group_quant(
+            fmha_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
+        )
         return fp8_block_gemm_fused(
             fmha_out_fp8,
             fmha_out_scale,
@@ -3905,21 +3912,3 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
             output_dtype=self._dtype,
             act="identity",
         )
-
-    def post_process(self, **kwargs):
-        multi_block_output = kwargs.get("multi_block_output", None)
-        cum_offsets = kwargs.get("cum_offsets", None)
-        seq_lens_encoder = kwargs.get("seq_lens_encoder", None)
-        seq_lens_decoder = kwargs.get("seq_lens_decoder", None)
-        max_input_length = kwargs.get("max_input_length", -1)
-        output_padding_offset = kwargs.get("output_padding_offset", None)  # only used in speculative decoding
-        out = rebuild_padding_v2(
-            multi_block_output,
-            cum_offsets,
-            seq_lens_decoder,
-            seq_lens_encoder,
-            output_padding_offset,
-            max_input_length,
-        )
-
-        return out
