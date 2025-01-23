@@ -3483,19 +3483,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         self.quant_type = config.quant_type
 
         self.weight_scale_dtype = self._dtype
-        self.qkv_weights_scale = []
         self.linear_weights_scale = []
-        self.ffn1_weights_scale = []
-        self.ffn2_weights_scale = []
-
-        self.q_proj_weights_scale = []
-        self.q_a_proj_weights_scale = []
-        self.q_b_proj_weights_scale = []
-        self.kv_a_proj_with_mqa_weights_scale = []
-        self.kv_b_proj_weights_scale = []
-
-        self.shared_expert_ffn1_weights_scale = []
-        self.shared_expert_ffn2_weights_scale = []
 
         for i in range(self.num_layers):
 
