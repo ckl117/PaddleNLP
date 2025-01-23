@@ -36,7 +36,7 @@ __inline__ __device__ T WarpReduceAbsMax(T val, unsigned lane_mask) {
   return val;
 }
 
-template <typename InType, typename OutType>
+template <typename InType, typename OutType, int GroupSize>
 __global__ void GroupQuantKernel(const InType* input,
                                    const int64_t numel,
                                    const float quant_max_bound,
@@ -47,7 +47,7 @@ __global__ void GroupQuantKernel(const InType* input,
   int32_t lane_id = threadIdx.x % WARP_SIZE;
   int32_t warp_id = threadIdx.x / WARP_SIZE;
 
-  __shared__ float smem[blockDim.x / WARP_SIZE + 1];
+  __shared__ float smem[GroupSize / WARP_SIZE];
 
   const int block_idx = blockIdx.x;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -96,10 +96,6 @@ std::vector<paddle::Tensor> LaunchGroupQuantKernel(const paddle::Tensor& x,
 
     out = paddle::empty(out_shape, OutType, place);
 
-    if(group_size <= 0 || group_size > 1024){
-        PD_THROW("group_quant's group_size must be in (0, 1024].");
-    }
-
     scale_shape[rank - 1] = scale_shape[rank - 1] / group_size;
     scale_out = paddle::empty(scale_shape, paddle::DataType::FLOAT32, place);
 
@@ -109,13 +105,18 @@ std::vector<paddle::Tensor> LaunchGroupQuantKernel(const paddle::Tensor& x,
     typedef PDTraits<OutType> out_traits;
     typedef typename out_traits::DataType OutDataType;
     typedef typename out_traits::data_t out_data_t;
-
-    GroupQuantKernel<InDataType, OutDataType><<<block_per_grid, group_size, 0, stream>>>(reinterpret_cast<const InDataType*>(x.data<in_data_t>()),
+    
+    if(group_size == 128){
+        GroupQuantKernel<InDataType, OutDataType, 128><<<block_per_grid, group_size, 0, stream>>>(reinterpret_cast<const InDataType*>(x.data<in_data_t>()),
                             numel,
                             quant_max_bound,
                             quant_min_bound,
                             reinterpret_cast<OutDataType*>(out.data<out_data_t>()),
                             reinterpret_cast<float*>(scale_out.data<float>()));
+    }else{
+        PD_THROW("group_quant's group_size only support 128.");
+    }
+    
     return {out, scale_out};
 }
 template <paddle::DataType InType>
