@@ -20,6 +20,7 @@ import time
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from threading import Thread
+from typing import List
 
 import numpy as np
 import paddle
@@ -94,6 +95,10 @@ class PredictorArgument:
         metadata={
             "help": "Quantization type. Supported values: a8w8, a8w8c8, a8w8_fp8, a8w8c8_fp8, weight_only_int4, weight_only_int8"
         },
+    )
+    weight_block_size: List[int] = field(
+        default_factory=lambda: [-1, -1],
+        metadata={"help": "Quantitative granularity of weights. Supported values: [-1, -1], [128, 128]"},
     )
     avx_model: bool = field(
         default=False, metadata={"help": "whether use AvxModel to do generation when using cpu inference"}
