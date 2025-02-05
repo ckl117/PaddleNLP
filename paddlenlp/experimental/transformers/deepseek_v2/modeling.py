@@ -53,7 +53,11 @@ from paddlenlp.utils.log import logger
 __all__ = ["DeepseekV2ForCausalLMBlockInferenceModel"]
 
 
-def block_quant(input_tensor, block_size=128):
+def block_quant(input_tensor, weight_block_size=[-1, -1]):
+    assert (
+                weight_block_size[0] == 128 and weight_block_size[1] == 128
+            ), f"Expected weight_block_size == [128, 128], but got {weight_block_size}"
+    block_size = weight_block_size[0]
     n, k = input_tensor.shape
     quant_data = paddle.zeros([n, k]).cast(paddle.float8_e4m3fn)
     quant_scale = paddle.ones([n // block_size, k // block_size], dtype=paddle.float32)
@@ -212,7 +216,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
         self.rms_norm_eps = config.rms_norm_eps
         self.max_position_embeddings = config.max_position_embeddings
         self.quant_type = config.quant_type
-        # self.weight_block_size = config.weight_block_size
+        self.weight_block_size = config.weight_block_size
         self.rope_theta = config.rope_theta
 
         self.use_neox = False
@@ -225,8 +229,9 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             self.use_weight_only = True
             self.quant_algo = "weight_only_int4"
         elif "fp8" in config.quant_type:
-            self.use_weight_only = True
-            self.quant_algo = "weight_only_int8"
+            if self.weight_block_size[0] == 128 and self.weight_block_size[1] == 128:
+                self.use_weight_only = True
+                self.quant_algo = "weight_only_int8"
 
         if self.use_weight_only and not ("fp8" in config.quant_type):
             assert (
@@ -469,11 +474,6 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                 paddle.ParamAttr(name=f"fuse{self.base_model_prefix}.{idx}.shared_expert_ffn2_weight_scale")
                 for idx in range(self.num_layers)
             ]
-        elif "fp8" in self.quant_type:
-            out_proj_weight_scale_attrs = [
-                paddle.ParamAttr(name=f"fuse{self.base_model_prefix}.{idx}.out_proj_weight_scale")
-                for idx in range(self.num_layers)
-            ]
 
         mla_config = MLAConfig(
             q_lora_rank=self.config.q_lora_rank,
@@ -606,10 +606,10 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     self.transformer_block.q_a_layernorm_weights[idx].set_value(q_a_layernorm_weight)
                     self.transformer_block.q_b_proj_weights_scale[idx].set_value(q_b_proj_weight_scale)
                 elif "fp8" in self.quant_type:
-                    q_a_proj_quanted_weight, q_a_proj_weight_scale = block_quant(q_a_proj_weight.transpose((1, 0)))
+                    q_a_proj_quanted_weight, q_a_proj_weight_scale = block_quant(q_a_proj_weight.transpose((1, 0)), self.weight_block_size)
                     self.transformer_block.q_a_proj_weights[idx].copy_(q_a_proj_quanted_weight, False)
                     self.transformer_block.q_a_proj_weights_scale[idx].set_value(q_a_proj_weight_scale)
-                    q_b_proj_quanted_weight, q_b_proj_weight_scale = block_quant(q_b_proj_weight.transpose((1, 0)))
+                    q_b_proj_quanted_weight, q_b_proj_weight_scale = block_quant(q_b_proj_weight.transpose((1, 0)), self.weight_block_size)
                     self.transformer_block.q_b_proj_weights[idx].copy_(q_b_proj_quanted_weight, False)
                     self.transformer_block.q_a_layernorm_weights[idx].set_value(q_a_layernorm_weight)
                     self.transformer_block.q_b_proj_weights_scale[idx].set_value(q_b_proj_weight_scale)
@@ -627,7 +627,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     self.transformer_block.q_proj_weights[idx].set_value(q_proj_quanted_weight)
                     self.transformer_block.q_proj_weights_scale[idx].set_value(q_proj_weight_scale)
                 elif "fp8" in self.quant_type:
-                    q_proj_quanted_weight, q_proj_weight_scale = block_quant(q_proj_weight.transpose((1, 0)))
+                    q_proj_quanted_weight, q_proj_weight_scale = block_quant(q_proj_weight.transpose((1, 0)), self.weight_block_size)
                     self.transformer_block.q_proj_weights[idx].copy_(q_proj_quanted_weight, False)
                     self.transformer_block.q_proj_weights_scale[idx].set_value(q_proj_weight_scale)
                 else:
@@ -658,12 +658,12 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                 self.transformer_block.kv_b_proj_weights_scale[idx].set_value(kv_b_proj_weight_scale)
             elif "fp8" in self.quant_type:
                 kv_a_proj_with_mqa_quanted_weight, kv_a_proj_with_mqa_weight_scale = block_quant(
-                    kv_a_proj_with_mqa_weight.transpose((1, 0))
+                    kv_a_proj_with_mqa_weight.transpose((1, 0)), self.weight_block_size
                 )
                 self.transformer_block.kv_a_proj_with_mqa_weights[idx].copy_(kv_a_proj_with_mqa_quanted_weight, False)
                 self.transformer_block.kv_a_proj_with_mqa_weights_scale[idx].set_value(kv_a_proj_with_mqa_weight_scale)
 
-                kv_b_proj_quanted_weight, kv_b_proj_weight_scale = block_quant(kv_b_proj_weight.transpose((1, 0)))
+                kv_b_proj_quanted_weight, kv_b_proj_weight_scale = block_quant(kv_b_proj_weight.transpose((1, 0)), self.weight_block_size)
                 self.transformer_block.kv_b_proj_weights[idx].copy_(kv_b_proj_quanted_weight, False)
                 self.transformer_block.kv_a_layernorm_weights[idx].set_value(kv_a_layernorm_weight)
                 self.transformer_block.kv_b_proj_weights_scale[idx].set_value(kv_b_proj_weight_scale)
@@ -681,7 +681,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                 self.transformer_block.linear_weights[idx].set_value(linear_quanted_weight)
                 self.transformer_block.linear_weights_scale[idx].set_value(linear_weight_scale)
             elif "fp8" in self.quant_type:
-                linear_quanted_weight, linear_weight_scale = block_quant(linear_weight.transpose((1, 0)))
+                linear_quanted_weight, linear_weight_scale = block_quant(linear_weight.transpose((1, 0)), self.weight_block_size)
                 self.transformer_block.linear_weights[idx].copy_(linear_quanted_weight, False)
                 self.transformer_block.linear_weights_scale[idx].set_value(linear_weight_scale)
             else:
@@ -710,7 +710,14 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     self.transformer_block.ffn1_weights[idx].set_value(ffn1_quanted_weight_tensor)
                     self.transformer_block.ffn1_weights_scale[idx].set_value(ffn1_weight_scale_tensor)
                 # elif "fp8" in self.quant_type:
-                #     ffn1_quanted_weight_tensor, ffn1_weight_scale_tensor = block_quant(ffn1_weight_tensor)
+                #     ffn1_0_weight_tensor, ffn1_0_weight_scale_tensor = block_quant(
+                #         state_dict[f"{self.base_model_prefix}.layers.{idx}.mlp.gate_proj.weight"].transpose((1, 0)), self.weight_block_size
+                #     )
+                #     ffn1_1_weight_tensor, ffn1_1_weight_scale_tensor = block_quant(
+                #         state_dict[f"{self.base_model_prefix}.layers.{idx}.mlp.up_proj.weight"].transpose((1, 0)), self.weight_block_size
+                #     )
+                #     ffn1_quanted_weight_tensor = paddle.concat([ffn1_0_weight_tensor, ffn1_1_weight_tensor], axis=-1)
+                #     ffn1_weight_scale_tensor = paddle.concat([ffn1_0_weight_scale_tensor, ffn1_1_weight_scale_tensor], axis=-1)
                 #     self.transformer_block.ffn1_weights[idx].copy_(ffn1_quanted_weight_tensor, False)
                 #     self.transformer_block.ffn1_weights_scale[idx].set_value(ffn1_weight_scale_tensor)
                 else:
@@ -727,7 +734,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     self.transformer_block.ffn2_weights_scale[idx].set_value(ffn2_weight_scale_tensor)
                 elif "fp8" in self.quant_type:
                     ffn2_quanted_weight_tensor, ffn2_weight_scale_tensor = block_quant(
-                        ffn2_weight_tensor.transpose((1, 0))
+                        ffn2_weight_tensor.transpose((1, 0)), self.weight_block_size
                     )
                     self.transformer_block.ffn2_weights[idx].copy_(ffn2_quanted_weight_tensor, False)
                     self.transformer_block.ffn2_weights_scale[idx].set_value(ffn2_weight_scale_tensor)

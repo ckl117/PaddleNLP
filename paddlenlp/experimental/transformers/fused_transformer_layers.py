@@ -4038,6 +4038,23 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
 
         return qkv_out
 
+    def compute_ffn1(self, tmp_out, i):
+        tmp_out_fp8, tmp_out_scale = group_quant(
+            tmp_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
+        )
+        out = fp8_block_gemm_fused(
+            tmp_out_fp8,
+            tmp_out_scale,
+            self.ffn2_weights[i],
+            self.ffn2_weights_scale[i],
+            bias=None,
+            transpose_x=False,
+            transpose_y=True,
+            output_dtype=self._dtype,
+            act="identity",
+        )
+        return out
+    
     def compute_ffn2(self, ffn1_out, i):
         ffn1_out_fp8, ffn1_out_scale = group_quant(
             ffn1_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
