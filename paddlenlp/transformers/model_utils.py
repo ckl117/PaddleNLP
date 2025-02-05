@@ -1208,7 +1208,7 @@ class PretrainedModel(Layer, GenerationMixin, ConversionMixin):
             else:
                 config.decode_strategy = "speculate_decoding"
             config.return_full_hidden_states = predictor_args.return_full_hidden_states
-        
+
         config.weight_block_size = predictor_args.weight_block_size
 
     @classmethod

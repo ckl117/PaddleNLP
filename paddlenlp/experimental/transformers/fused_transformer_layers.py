@@ -3595,11 +3595,9 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 )
             else:
                 ffn1_weight_scale = self.create_parameter(
-                    shape=[self.intermediate_size * 2]
-                    if self.config.activation.endswith("glu")
-                    else [self.intermediate_size],
+                    shape=self.get_scale_shape(self.ffn1_weight_shape),
                     attr=ffn1_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
 
@@ -3798,7 +3796,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 ffn1_weight = self.create_parameter(
                     shape=self.ffn1_weight_shape,
                     attr=ffn1_weight_attr,
-                    dtype=self.create_params_type,
+                    dtype=self.quant_type_fp8,
                     is_bias=False,
                 )
                 ffn2_weight = self.create_parameter(
@@ -4017,13 +4015,6 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 axis=-1,
             )
         else:
-            qkv_out = weight_only_linear(
-                ln_out,
-                weight=self.qkv_weights[i],
-                bias=self.qkv_biases[i],
-                weight_scale=self.qkv_weights_scale[i],
-                weight_dtype=self.weight_dtype,
-            )
             qkv_out = fp8_block_gemm_fused(
                 ln_out_fp8,
                 ln_out_scale,
@@ -4037,6 +4028,23 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             )
 
         return qkv_out
+
+    def compute_out_linear(self, fmha_out, i):
+        fmha_out_fp8, fmha_out_scale = group_quant(
+            fmha_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
+        )
+        out = fp8_block_gemm_fused(
+            fmha_out_fp8,
+            fmha_out_scale,
+            self.linear_weights[i],
+            self.linear_weights_scale[i],
+            bias=None,
+            transpose_x=False,
+            transpose_y=True,
+            output_dtype=self._dtype,
+            act="identity",
+        )
+        return out
 
     def compute_ffn1(self, tmp_out, i):
         tmp_out_fp8, tmp_out_scale = group_quant(
@@ -4054,7 +4062,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             act="identity",
         )
         return out
-    
+
     def compute_ffn2(self, ffn1_out, i):
         ffn1_out_fp8, ffn1_out_scale = group_quant(
             ffn1_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
@@ -4064,23 +4072,6 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             ffn1_out_scale,
             self.ffn2_weights[i],
             self.ffn2_weights_scale[i],
-            bias=None,
-            transpose_x=False,
-            transpose_y=True,
-            output_dtype=self._dtype,
-            act="identity",
-        )
-        return out
-
-    def compute_out_linear(self, fmha_out, i):
-        fmha_out_fp8, fmha_out_scale = group_quant(
-            fmha_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-        )
-        out = fp8_block_gemm_fused(
-            fmha_out_fp8,
-            fmha_out_scale,
-            self.linear_weights[i],
-            self.linear_weights_scale[i],
             bias=None,
             transpose_x=False,
             transpose_y=True,
