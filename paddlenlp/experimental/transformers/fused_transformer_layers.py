@@ -3906,8 +3906,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             if self.config.mla_config.q_lora_rank is not None:
                 query = fp8_block_gemm_fused(
                     ln_out_fp8,
-                    ln_out_scale,
                     self.q_a_proj_weights[i],
+                    ln_out_scale,
                     self.q_a_proj_weights_scale[i],
                     bias=None,
                     transpose_x=False,
@@ -3928,8 +3928,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 )
                 query = fp8_block_gemm_fused(
                     query_fp8,
-                    query_scale,
                     self.q_b_proj_weights[i],
+                    query_scale,
                     self.q_b_proj_weights_scale[i],
                     bias=None,
                     transpose_x=False,
@@ -3940,8 +3940,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             else:
                 query = fp8_block_gemm_fused(
                     ln_out_fp8,
-                    ln_out_scale,
                     self.q_proj_weights[i],
+                    ln_out_scale,
                     self.q_proj_weights_scale[i],
                     bias=None,
                     transpose_x=False,
@@ -3957,8 +3957,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
 
             compressed_kv = fp8_block_gemm_fused(
                 ln_out_fp8,
-                ln_out_scale,
                 self.kv_a_proj_with_mqa_weights[i],
+                ln_out_scale,
                 self.kv_a_proj_with_mqa_weights_scale[i],
                 bias=None,
                 transpose_x=False,
@@ -3983,8 +3983,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             )
             key_value = fp8_block_gemm_fused(
                 compressed_kv_fp8,
-                compressed_kv_scale,
                 self.kv_b_proj_weights[i],
+                compressed_kv_scale,
                 self.kv_b_proj_weights_scale[i],
                 bias=None,
                 transpose_x=False,
@@ -4017,8 +4017,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
         else:
             qkv_out = fp8_block_gemm_fused(
                 ln_out_fp8,
-                ln_out_scale,
                 self.qkv_weights[i],
+                ln_out_scale,
                 self.qkv_weights_scale[i],
                 bias=None,
                 transpose_x=False,
@@ -4035,8 +4035,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
         )
         out = fp8_block_gemm_fused(
             fmha_out_fp8,
-            fmha_out_scale,
             self.linear_weights[i],
+            fmha_out_scale,
             self.linear_weights_scale[i],
             bias=None,
             transpose_x=False,
@@ -4052,8 +4052,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
         )
         out = fp8_block_gemm_fused(
             tmp_out_fp8,
-            tmp_out_scale,
             self.ffn2_weights[i],
+            tmp_out_scale,
             self.ffn2_weights_scale[i],
             bias=None,
             transpose_x=False,
@@ -4069,8 +4069,8 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
         )
         out = fp8_block_gemm_fused(
             ffn1_out_fp8,
-            ffn1_out_scale,
             self.ffn2_weights[i],
+            ffn1_out_scale,
             self.ffn2_weights_scale[i],
             bias=None,
             transpose_x=False,
@@ -4178,22 +4178,3 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 self.config.moe_config.norm_topk_prob,
             )
         return fused_moe_out
-
-
-def has_nan_or_inf(tensor):
-    has_nan = paddle.any(paddle.isnan(tensor))
-    has_inf = paddle.any(paddle.isinf(tensor))
-    return has_nan or has_inf
-
-
-def save_data(tensor, path):
-    import pickle
-
-    pickle.dump(tensor.cast(paddle.float32).numpy(), open(path, "wb"))
-
-
-def read_data(path):
-    import pickle
-
-    data_np = pickle.load(open(path, "rb"))
-    return paddle.to_tensor(data_np).cast(paddle.float32)

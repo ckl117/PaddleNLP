@@ -42,7 +42,7 @@ def get_candidate_configs(sm):
     candidate_configs = list()
 
     hasbias = ("false", "true")
-    KernelSchedule = ("KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum<1>",)
+    KernelSchedule = ("KernelTmaWarpSpecializedCooperativeFP8BlockScaledSubGroupMAccum<1>",)
     EpilogueSchedule = ("TmaWarpSpecializedCooperative",)
     for act_tag in [
         ("noact", "Identity"),
@@ -196,7 +196,7 @@ T get_relative_best(nlohmann::json* json_data,
     if (json_data->contains(target_key)) {
         return json_data->at(target_key);
     } else {
-        return "<_128, _128, _128>, <_1, _1, _1>, KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum<1>, TmaWarpSpecializedCooperative";
+        return "<_128, _128, _128>, <_1, _2, _1>, KernelTmaWarpSpecializedCooperativeFP8BlockScaledSubGroupMAccum<1>, TmaWarpSpecializedCooperative";
     }
 }
 

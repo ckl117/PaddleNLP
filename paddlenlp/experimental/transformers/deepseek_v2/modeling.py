@@ -59,20 +59,25 @@ def block_quant(input_tensor, weight_block_size=[-1, -1]):
     ), f"Expected weight_block_size == [128, 128], but got {weight_block_size}"
     block_size = weight_block_size[0]
     n, k = input_tensor.shape
-    quant_data = paddle.zeros([n, k]).cast(paddle.float8_e4m3fn)
-    quant_scale = paddle.ones([n // block_size, k // block_size], dtype=paddle.float32)
+    num_blocks_rows = n // block_size
+    num_blocks_cols = k // block_size
+
+    quant_data = paddle.zeros([n, k], dtype=paddle.float32)
+    quant_scale = paddle.ones([num_blocks_rows, num_blocks_cols], dtype=paddle.float32)
     tensor_fp32 = paddle.cast(input_tensor, paddle.float32)
     for row in range(quant_scale.shape[0]):
+        start_row = row * block_size
+        end_row = (row + 1) * block_size
         for col in range(quant_scale.shape[1]):
-            data = tensor_fp32[row * block_size : (row + 1) * block_size, col * block_size : (col + 1) * block_size]
+            start_col = col * block_size
+            end_col = (col + 1) * block_size
+            data = tensor_fp32[start_row:end_row, start_col:end_col]
             max_val = paddle.max(paddle.abs(data)).numpy().item()
             scale = max(max_val, 0.000001) / 448.0
             quant_scale[row, col] = scale
             quant_val = paddle.clip(data / scale, min=-448.0, max=448.0)
-            quant_data[row * block_size : (row + 1) * block_size, col * block_size : (col + 1) * block_size].copy_(
-                quant_val.cast(paddle.float8_e4m3fn), False
-            )
-    return quant_data, quant_scale
+            quant_data[start_row:end_row, start_col:end_col] = quant_val
+    return quant_data.cast(paddle.float8_e4m3fn), quant_scale
 
 
 class DeepseekScalingRotaryEmbedding(nn.Layer):

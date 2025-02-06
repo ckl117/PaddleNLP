@@ -21,12 +21,15 @@
 #include "cute/tensor.hpp"
 #include "cutlass/tensor_ref.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
-#include "cutlass_kernels/gemm_with_blockwise_scaling/collective/collective_builder.hpp"
+#include "cutlass/gemm/collective/collective_builder.hpp"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/kernel/gemm_universal.hpp"
 #include "cutlass/gemm/kernel/tile_scheduler_params.h"
 #include "cutlass/epilogue/dispatch_policy.hpp"
 #include "cutlass/epilogue/collective/collective_builder.hpp"
+
+#include "cutlass_kernels/gemm/dispatch_policy.hpp"
+#include "cutlass_kernels/gemm/collective/collective_builder.hpp"
 
 using namespace cute;
 
@@ -37,7 +40,7 @@ template <
   template <class> typename Activation = cutlass::epilogue::thread::Identity,
   typename TileShape = Shape<_128, _128, _128>,
   typename ClusterShape = Shape<_1, _2, _1>,
-  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8GroupBlockScaledAccum<1>,
+  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedCooperativeFP8BlockScaledSubGroupMAccum<1>,
   typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecializedCooperative,
   typename SM = cutlass::arch::Sm90
 >
@@ -88,7 +91,7 @@ bool dispatch_fuse_block_gemm_c3x(GemmEpilogueAllParams params){
       FusionOperation
     >::CollectiveOp;
 
-  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilderBlock<
+  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
       SM, cutlass::arch::OpClassTensorOp,
       ElementA, LayoutA, AlignmentA,
       ElementB, LayoutB, AlignmentB,
@@ -120,10 +123,10 @@ bool dispatch_fuse_block_gemm_c3x(GemmEpilogueAllParams params){
   //
 
   /// Initialization
-  StrideA stride_A{params.lda, cute::Int<1>{}, params.M * params.lda};
-  StrideB stride_B{params.ldb, cute::Int<1>{}, params.N * params.ldb};
+  StrideA stride_A{params.lda, cute::Int<1>{}, 0};
+  StrideB stride_B{params.ldb, cute::Int<1>{}, 0};
   StrideC stride_C{0, cute::Int<1>{}, 0};
-  StrideD stride_D{params.ldd, cute::Int<1>{}, params.ldd * params.M};
+  StrideD stride_D{params.ldd, cute::Int<1>{}, 0};
 
   auto a_ptr = reinterpret_cast<ElementA*>(const_cast<void*>(params.A));
   auto a_scale_ptr = reinterpret_cast<float*>(const_cast<void*>(params.A_scale));
@@ -132,13 +135,13 @@ bool dispatch_fuse_block_gemm_c3x(GemmEpilogueAllParams params){
   auto c_ptr = reinterpret_cast<ElementC*>(const_cast<void*>(params.bias));
   auto d_ptr = reinterpret_cast<ElementD*>(params.D);
 
-  ProblemShapeType problem_size = ProblemShapeType{params.M, params.N, params.K, params.batch_count};
+  ProblemShapeType problem_size = ProblemShapeType{params.M, params.N, params.K, 1};
 
   typename Gemm::Arguments arguments{
     cutlass::gemm::GemmUniversalMode::kGemm,
     problem_size,
     {a_ptr, stride_A, b_ptr, stride_B,
-    4, a_scale_ptr, b_scale_ptr},
+    a_scale_ptr, b_scale_ptr},
     {{params.scale}, // epilogue.thread
       c_ptr, stride_C, d_ptr, stride_D}
   };
