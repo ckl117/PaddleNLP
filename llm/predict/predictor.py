@@ -97,8 +97,8 @@ class PredictorArgument:
         },
     )
     weight_block_size: List[int] = field(
-        default_factory=lambda: [-1, -1],
-        metadata={"help": "Quantitative granularity of weights. Supported values: [-1, -1], [128, 128]"},
+        default_factory=lambda: [0, 0],
+        metadata={"help": "Quantitative granularity of weights. Supported values: [0, 0], [128, 128]"},
     )
     avx_model: bool = field(
         default=False, metadata={"help": "whether use AvxModel to do generation when using cpu inference"}
