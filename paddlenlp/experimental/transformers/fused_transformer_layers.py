@@ -1236,7 +1236,7 @@ class FusedMultiTransformerBase(Layer):
                 self.ffn1_biases[i],
                 self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
                 self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                self.quant_type if hasattr(self, "quant_type") else "None",
+                "weight_only_int8" if hasattr(self, "quant_type") else "None",
             )
 
             fused_moe_out = moe_reduce(
@@ -4078,7 +4078,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             group_idx = paddle.topk(group_scores, k=topk_group, axis=-1, sorted=False)[1]  # [n, topk_group]
 
             group_mask = paddle.zeros_like(group_scores, dtype="int64")  # [n, num_expert_group]
-            group_mask = paddle.put_along_axis(group_mask, group_idx, 1, axis=1)
+            group_mask.put_along_axis_(group_idx, 1, axis=1)
 
             # Apply group mask to the scores
             score_mask = (
@@ -4092,40 +4092,59 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             scores = scores * score_mask
 
             return scores
-
+    
         if self.config.moe_config.topk_method is not None:
             gate_out = paddle.matmul(tmp_out.cast("float32"), self.gate_weights[i])
             # 应用各种策略后重塑的scores
             scores = get_moe_scores(gate_out, self.config.moe_config, self.e_score_correction_biases[i])
-            # topk在moe_dispatch中
-            (
-                permute_input,
-                token_nums_per_expert,
-                permute_indices_per_token,
-                expert_scales_float,
-                top_k_indices,
-            ) = moe_dispatch(tmp_out, scores, self.config.moe_config.top_k, False, topk_only_mode=True)
+            
+            # TODO:使用trition fp8算子,此处可以按需修改
+            use_fp8 = False
+            if use_fp8:
+                from csrc.gpu.moe.fused_moe_triton import fused_moe
+                fused_moe_out = fused_moe(
+                    tmp_out,
+                    self.ffn1_weights[i],
+                    self.ffn2_weights[i],
+                    scores,
+                    self.config.moe_config.top_k,
+                    renormalize=self.config.moe_config.norm_topk_prob,
+                    use_fp8_w8a8=True,
+                    w1_scale=self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
+                    w2_scale=self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
+                    block_shape=self.config.weight_block_size, # block-wise， 如果是per-tensor量化，此处删掉就可以
+                    refactor=self.config.moe_config.routed_scaling_factor,
+                )
+            else:
+                # topk在moe_dispatch中
+                (
+                    permute_input,
+                    token_nums_per_expert,
+                    permute_indices_per_token,
+                    expert_scales_float,
+                    top_k_indices,
+                ) = moe_dispatch(tmp_out, scores, self.config.moe_config.top_k, False, topk_only_mode=True)
 
-            ffn_out = moe_ffn(
-                permute_input,
-                token_nums_per_expert,
-                self.ffn1_weights[i],
-                self.ffn2_weights[i],
-                self.ffn1_biases[i],
-                self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
-                self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                "weight_only_int8" if hasattr(self, "quant_type") else "None",
-            )
+                ffn_out = moe_ffn(
+                    permute_input,
+                    token_nums_per_expert,
+                    self.ffn1_weights[i],
+                    self.ffn2_weights[i],
+                    self.ffn1_biases[i],
+                    self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
+                    self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
+                    self.quant_type if hasattr(self, "quant_type") else "None",
+                )
 
-            fused_moe_out = moe_reduce(
-                ffn_out,
-                expert_scales_float,
-                permute_indices_per_token,
-                top_k_indices,
-                self.ffn2_biases[i],
-                norm_topk_prob=self.config.moe_config.norm_topk_prob,
-                routed_scaling_factor=self.config.moe_config.routed_scaling_factor,  # reduce中会做topk个weight的norm和routed_scaling_factor
-            )
+                fused_moe_out = moe_reduce(
+                    ffn_out,
+                    expert_scales_float,
+                    permute_indices_per_token,
+                    top_k_indices,
+                    self.ffn2_biases[i],
+                    norm_topk_prob=self.config.moe_config.norm_topk_prob,
+                    routed_scaling_factor=self.config.moe_config.routed_scaling_factor,  # reduce中会做topk个weight的norm和routed_scaling_factor
+                )
         else:
             fused_moe_out = fused_moe(
                 tmp_out,
@@ -4141,7 +4160,6 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 self.config.moe_config.norm_topk_prob,
             )
         return fused_moe_out
-
 
 def dynamic_quant(x, weight_block_size: list = [0, 0]):
     if weight_block_size[0] == 0 and weight_block_size[1] == 0:
