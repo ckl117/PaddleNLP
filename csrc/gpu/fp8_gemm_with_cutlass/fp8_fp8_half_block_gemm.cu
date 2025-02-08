@@ -233,7 +233,6 @@ std::vector<paddle::DataType> CutlassFp8Fp8HalfBlockGemmFusedInferDtype(
     const paddle::optional<paddle::DataType>& bias_type,
     bool trans_x,
     bool trans_y,
-    float scale,  // only support per-tensor quantization
     std::string output_dtype) {
     paddle::DataType data_type;
     if (output_dtype == "bfloat16")
