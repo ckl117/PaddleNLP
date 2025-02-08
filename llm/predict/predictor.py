@@ -97,7 +97,7 @@ class PredictorArgument:
         },
     )
     weight_block_size: List[int] = field(
-        default_factory=lambda: [0, 0],
+        default_factory=lambda: [128, 128],
         metadata={"help": "Quantitative granularity of weights. Supported values: [0, 0], [128, 128]"},
     )
     avx_model: bool = field(

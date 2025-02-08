@@ -202,6 +202,7 @@ class FusedMultiTransformerConfig:
         num_heads,
         intermediate_size,
         quant_type="",
+        weight_block_size=[0, 0],
         dropout_rate=0.0,
         activation="gelu",
         norm_type="layernorm",
@@ -324,6 +325,7 @@ class FusedMultiTransformerConfig:
         self.cache_v_out_scale_attrs = cache_v_out_scale_attrs
 
         self.quant_type = quant_type
+        self.weight_block_size = weight_block_size
         self.quant_round_type = quant_round_type
         self.quant_max_bound = quant_max_bound
         self.quant_min_bound = quant_min_bound
@@ -3575,7 +3577,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 )
             else:
                 ffn1_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.ffn1_weight_shape),
+                    shape=self.get_scale_shape(self.ffn1_weight_shape, ffn1=True),
                     attr=ffn1_weight_scale_attr,
                     dtype="float32",
                     is_bias=False,
@@ -3649,8 +3651,17 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 self._add_parameter(shared_expert_ffn1_weight_scale)
                 self._add_parameter(shared_expert_ffn2_weight_scale)
 
-    def get_scale_shape(self, weight_shape: list):
-        return [i // 128 for i in weight_shape]
+    def get_scale_shape(self, weight_shape: list, ffn1=False):
+        scale_shape = [i for i in weight_shape]
+        scale_shape[-2] = (
+            weight_shape[-2] // self.config.weight_block_size[0] if self.config.weight_block_size[0] != 0 else 1
+        )
+        if ffn1 and self.config.weight_block_size[0] == 0:
+            scale_shape[-2] *= 2
+        scale_shape[-1] = (
+            weight_shape[-1] // self.config.weight_block_size[1] if self.config.weight_block_size[1] != 0 else 1
+        )
+        return scale_shape
 
     def init_weight_shape(self, config):
         super().init_weight_shape(config)
@@ -3881,19 +3892,18 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             self._add_parameter(ffn2_weight)
 
     def compute_qkv_linear(self, ln_out, i):
-        ln_out_fp8, ln_out_scale = group_quant(ln_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0)
+        ln_out_fp8, ln_out_scale = dynamic_quant(ln_out, self.config.weight_block_size)
         if self.config.mla_config.use_mla():
             if self.config.mla_config.q_lora_rank is not None:
-                query = fp8_block_gemm_fused(
-                    ln_out_fp8,
-                    self.q_a_proj_weights[i],
-                    ln_out_scale,
-                    self.q_a_proj_weights_scale[i],
+                query = cutlass_fp8_gemm(
+                    x=ln_out_fp8,
+                    y=self.q_a_proj_weights[i],
+                    x_s=ln_out_scale,
+                    y_s=self.q_a_proj_weights_scale[i],
                     bias=None,
-                    transpose_x=False,
-                    transpose_y=True,
                     output_dtype=self._dtype,
                     act="identity",
+                    weight_block_size=self.config.weight_block_size,
                 )
 
                 query = self.norm_func(
@@ -3903,31 +3913,25 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                     epsilon=self._epsilon,
                     begin_norm_axis=1,
                 )[0]
-                query_fp8, query_scale = group_quant(
-                    query, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-                )
-                query = fp8_block_gemm_fused(
-                    query_fp8,
-                    self.q_b_proj_weights[i],
-                    query_scale,
-                    self.q_b_proj_weights_scale[i],
+                query = cutlass_fp8_gemm(
+                    x=query,
+                    y=self.q_b_proj_weights[i],
+                    y_s=self.q_b_proj_weights_scale[i],
                     bias=None,
-                    transpose_x=False,
-                    transpose_y=True,
                     output_dtype=self._dtype,
                     act="identity",
+                    weight_block_size=self.config.weight_block_size,
                 )
             else:
-                query = fp8_block_gemm_fused(
-                    ln_out_fp8,
-                    self.q_proj_weights[i],
-                    ln_out_scale,
-                    self.q_proj_weights_scale[i],
+                query = cutlass_fp8_gemm(
+                    x=ln_out_fp8,
+                    y=self.q_proj_weights[i],
+                    x_s=ln_out_scale,
+                    y_s=self.q_proj_weights_scale[i],
                     bias=None,
-                    transpose_x=False,
-                    transpose_y=True,
                     output_dtype=self._dtype,
                     act="identity",
+                    weight_block_size=self.config.weight_block_size,
                 )
 
             query = query.reshape([-1, self.num_heads, self.config.mla_config.qk_head_dim])
@@ -3935,16 +3939,15 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 query, [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.qk_rope_head_dim], axis=-1
             )
 
-            compressed_kv = fp8_block_gemm_fused(
-                ln_out_fp8,
-                self.kv_a_proj_with_mqa_weights[i],
-                ln_out_scale,
-                self.kv_a_proj_with_mqa_weights_scale[i],
+            compressed_kv = cutlass_fp8_gemm(
+                x=ln_out_fp8,
+                y=self.kv_a_proj_with_mqa_weights[i],
+                x_s=ln_out_scale,
+                y_s=self.kv_a_proj_with_mqa_weights_scale[i],
                 bias=None,
-                transpose_x=False,
-                transpose_y=True,
                 output_dtype=self._dtype,
                 act="identity",
+                weight_block_size=self.config.weight_block_size,
             )
             compressed_kv, key_pe = paddle.split(
                 compressed_kv, [self.config.mla_config.kv_lora_rank, self.config.mla_config.qk_rope_head_dim], axis=-1
@@ -3958,20 +3961,35 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 begin_norm_axis=1,
             )[0]
 
-            compressed_kv_fp8, compressed_kv_scale = group_quant(
-                compressed_kv, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-            )
-            key_value = fp8_block_gemm_fused(
-                compressed_kv_fp8,
-                self.kv_b_proj_weights[i],
-                compressed_kv_scale,
-                self.kv_b_proj_weights_scale[i],
-                bias=None,
-                transpose_x=False,
-                transpose_y=True,
-                output_dtype=self._dtype,
-                act="identity",
-            )
+            # tensor_wise quantization
+            if self.config.weight_block_size[0] == 0 and self.config.weight_block_size[1] == 0:
+                compressed_kv_fp8, compressed_kv_scale = per_tensor_quant_fp8(ln_out)
+                key_value = fp8_gemm_fused(
+                    compressed_kv_fp8,
+                    self.kv_b_proj_weights[i],
+                    compressed_kv_scale,
+                    self.kv_b_proj_weights_scale[i],
+                    bias=None,
+                    transpose_x=False,
+                    transpose_y=True,
+                    output_dtype=self._dtype,
+                    act="identity",
+                )
+            else:
+                compressed_kv_fp8, compressed_kv_scale = group_quant(
+                    compressed_kv, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
+                )
+                key_value = fp8_block_gemm_fused(
+                    compressed_kv_fp8,
+                    self.kv_b_proj_weights[i],
+                    compressed_kv_scale,
+                    self.kv_b_proj_weights_scale[i],
+                    bias=None,
+                    transpose_x=False,
+                    transpose_y=True,
+                    output_dtype=self._dtype,
+                    act="identity",
+                )
             key_value = key_value.reshape(
                 [-1, self.num_heads, self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim]
             )
@@ -3995,68 +4013,52 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 axis=-1,
             )
         else:
-            qkv_out = fp8_block_gemm_fused(
-                ln_out_fp8,
-                self.qkv_weights[i],
-                ln_out_scale,
-                self.qkv_weights_scale[i],
+            qkv_out = cutlass_fp8_gemm(
+                x=ln_out_fp8,
+                y=self.qkv_weights[i],
+                x_s=ln_out_scale,
+                y_s=self.qkv_weights_scale[i],
                 bias=None,
-                transpose_x=False,
-                transpose_y=True,
                 output_dtype=self._dtype,
                 act="identity",
+                weight_block_size=self.config.weight_block_size,
             )
 
         return qkv_out
 
     def compute_out_linear(self, fmha_out, i):
-        fmha_out_fp8, fmha_out_scale = group_quant(
-            fmha_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-        )
-        out = fp8_block_gemm_fused(
-            fmha_out_fp8,
-            self.linear_weights[i],
-            fmha_out_scale,
-            self.linear_weights_scale[i],
+        out = cutlass_fp8_gemm(
+            x=fmha_out,
+            y=self.linear_weights[i],
+            y_s=self.linear_weights_scale[i],
             bias=None,
-            transpose_x=False,
-            transpose_y=True,
             output_dtype=self._dtype,
             act="identity",
+            weight_block_size=self.config.weight_block_size,
         )
         return out
 
     def compute_ffn1(self, tmp_out, i):
-        tmp_out_fp8, tmp_out_scale = group_quant(
-            tmp_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-        )
-        out = fp8_block_gemm_fused(
-            tmp_out_fp8,
-            self.ffn2_weights[i],
-            tmp_out_scale,
-            self.ffn2_weights_scale[i],
+        out = cutlass_fp8_gemm(
+            x=tmp_out,
+            y=self.ffn1_weights[i],
+            y_s=self.ffn1_weights_scale[i],
             bias=None,
-            transpose_x=False,
-            transpose_y=True,
             output_dtype=self._dtype,
             act="identity",
+            weight_block_size=self.config.weight_block_size,
         )
         return out
 
     def compute_ffn2(self, ffn1_out, i):
-        ffn1_out_fp8, ffn1_out_scale = group_quant(
-            ffn1_out, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-        )
-        out = fp8_block_gemm_fused(
-            ffn1_out_fp8,
-            self.ffn2_weights[i],
-            ffn1_out_scale,
-            self.ffn2_weights_scale[i],
+        out = cutlass_fp8_gemm(
+            x=ffn1_out,
+            y=self.ffn2_weights[i],
+            y_s=self.ffn2_weights_scale[i],
             bias=None,
-            transpose_x=False,
-            transpose_y=True,
             output_dtype=self._dtype,
             act="identity",
+            weight_block_size=self.config.weight_block_size,
         )
         return out
 
@@ -4158,3 +4160,59 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 self.config.moe_config.norm_topk_prob,
             )
         return fused_moe_out
+
+
+def dynamic_quant(x, weight_block_size: list = [0, 0]):
+    if weight_block_size[0] == 0 and weight_block_size[1] == 0:
+        x_q, x_s = per_tensor_quant_fp8(x)
+    else:
+        x_q, x_s = group_quant(x, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0)
+    return x_q, x_s
+
+
+def cutlass_fp8_gemm(
+    x, y, x_s=None, y_s=None, bias=None, output_dtype="float16", act="identity", weight_block_size=[0, 0]
+):
+    if weight_block_size[0] == 0 and weight_block_size[1] == 0:
+        if x_s is None:
+            x_q, x_s = per_tensor_quant_fp8(x)
+        else:
+            x_q = x
+        out = fp8_gemm_fused(
+            x=x_q,
+            y=y,
+            x_scale=x_s,
+            y_scale=y_s,
+            bias=None,
+            transpose_x=False,
+            transpose_y=True,
+            scale=1.0,
+            output_dtype=output_dtype,
+            act="identity",
+        )
+    else:
+        if x_s is None:
+            x_q, x_s = group_quant(x, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0)
+        else:
+            x_q = x
+        out = fp8_gemm_fused(
+            x_q,
+            y,
+            x_s,
+            y_s,
+            bias=None,
+            transpose_x=False,
+            transpose_y=True,
+            output_dtype=output_dtype,
+            act="identity",
+        )
+    exit()
+    return out
+
+
+def per_tensor_quant_fp8(x):
+    x_fp32 = x.cast("float32")
+    x_s = x_fp32.abs().max().clip(min=0.000001) / 448.0
+    x_q = x_fp32 / x_s
+    x_q = x_q.clip(min=-448.0, max=448.0)
+    return x_q.cast("float8_e4m3fn"), x_s

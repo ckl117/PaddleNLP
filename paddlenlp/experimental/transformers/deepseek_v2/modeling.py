@@ -179,9 +179,6 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             self.use_weight_only = True
             self.quant_algo = "weight_only_int4"
         elif "fp8" in config.quant_type:
-            assert (
-                self.weight_block_size[0] == 128 and self.weight_block_size[1] == 128
-            ), f"Expected weight_block_size == [128, 128], but got {self.weight_block_size}"
             self.use_weight_only = True
             self.quant_algo = "weight_only_int8"
 
@@ -471,6 +468,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             kv_num_heads=self.num_key_value_heads,
             intermediate_size=self.intermediate_size,
             quant_type=self.quant_type,
+            weight_block_size=self.weight_block_size,
             activation="swiglu",
             num_layers=config.num_hidden_layers,
             nranks=config.tensor_parallel_degree,
