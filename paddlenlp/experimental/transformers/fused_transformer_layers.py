@@ -3756,7 +3756,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             linear_weight = self.create_parameter(
                 shape=self.linear_weight_shape,
                 attr=linear_weight_attr,
-                dtype="float8_e4m3fn",
+                dtype=self.quant_type_fp8,
                 is_bias=False,
             )
 
@@ -3961,35 +3961,15 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
                 begin_norm_axis=1,
             )[0]
 
-            # tensor_wise quantization
-            if self.config.weight_block_size[0] == 0 and self.config.weight_block_size[1] == 0:
-                compressed_kv_fp8, compressed_kv_scale = per_tensor_quant_fp8(ln_out)
-                key_value = fp8_gemm_fused(
-                    compressed_kv_fp8,
-                    self.kv_b_proj_weights[i],
-                    compressed_kv_scale,
-                    self.kv_b_proj_weights_scale[i],
-                    bias=None,
-                    transpose_x=False,
-                    transpose_y=True,
-                    output_dtype=self._dtype,
-                    act="identity",
-                )
-            else:
-                compressed_kv_fp8, compressed_kv_scale = group_quant(
-                    compressed_kv, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0
-                )
-                key_value = fp8_block_gemm_fused(
-                    compressed_kv_fp8,
-                    self.kv_b_proj_weights[i],
-                    compressed_kv_scale,
-                    self.kv_b_proj_weights_scale[i],
-                    bias=None,
-                    transpose_x=False,
-                    transpose_y=True,
-                    output_dtype=self._dtype,
-                    act="identity",
-                )
+            key_value = cutlass_fp8_gemm(
+                x=compressed_kv,
+                y=self.kv_b_proj_weights[i],
+                y_s=self.kv_b_proj_weights_scale[i],
+                bias=None,
+                output_dtype=self._dtype,
+                act="identity",
+                weight_block_size=self.config.weight_block_size,
+            )
             key_value = key_value.reshape(
                 [-1, self.num_heads, self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim]
             )
@@ -4047,6 +4027,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformerWeightOnly):
             output_dtype=self._dtype,
             act="identity",
             weight_block_size=self.config.weight_block_size,
+            ffn1=True,
         )
         return out
 
@@ -4171,31 +4152,58 @@ def dynamic_quant(x, weight_block_size: list = [0, 0]):
 
 
 def cutlass_fp8_gemm(
-    x, y, x_s=None, y_s=None, bias=None, output_dtype="float16", act="identity", weight_block_size=[0, 0]
+    x, y, x_s=None, y_s=None, bias=None, output_dtype="float16", act="identity", weight_block_size=[0, 0], ffn1=False
 ):
     if weight_block_size[0] == 0 and weight_block_size[1] == 0:
         if x_s is None:
             x_q, x_s = per_tensor_quant_fp8(x)
         else:
             x_q = x
-        out = fp8_gemm_fused(
-            x=x_q,
-            y=y,
-            x_scale=x_s,
-            y_scale=y_s,
-            bias=None,
-            transpose_x=False,
-            transpose_y=True,
-            scale=1.0,
-            output_dtype=output_dtype,
-            act="identity",
-        )
+        x_s = x_s.item()
+        if ffn1:
+            n, k = y.shape
+            y_0 = y[: n // 2, :]
+            y_1 = y[n // 2 :, :]
+            y_s_0 = y_s[0, 0].item()
+            y_s_1 = y_s[1, 0].item()
+            out_0 = fp8_gemm_fused(
+                x=x_q,
+                y=y_0,
+                bias=None,
+                transpose_x=False,
+                transpose_y=True,
+                scale=x_s * y_s_0,
+                output_dtype=output_dtype,
+                act="identity",
+            )
+            out_1 = fp8_gemm_fused(
+                x=x_q,
+                y=y_1,
+                bias=None,
+                transpose_x=False,
+                transpose_y=True,
+                scale=x_s * y_s_1,
+                output_dtype=output_dtype,
+                act="identity",
+            )
+            out = paddle.concat([out_0, out_1], axis=-1)
+        else:
+            out = fp8_gemm_fused(
+                x=x_q,
+                y=y,
+                bias=None,
+                transpose_x=False,
+                transpose_y=True,
+                scale=x_s * y_s[0, 0].item(),
+                output_dtype=output_dtype,
+                act="identity",
+            )
     else:
         if x_s is None:
             x_q, x_s = group_quant(x, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0)
         else:
             x_q = x
-        out = fp8_gemm_fused(
+        out = fp8_block_gemm_fused(
             x_q,
             y,
             x_s,
@@ -4206,7 +4214,6 @@ def cutlass_fp8_gemm(
             output_dtype=output_dtype,
             act="identity",
         )
-    exit()
     return out
 
 
@@ -4216,3 +4223,66 @@ def per_tensor_quant_fp8(x):
     x_q = x_fp32 / x_s
     x_q = x_q.clip(min=-448.0, max=448.0)
     return x_q.cast("float8_e4m3fn"), x_s
+
+
+def native_w8a8_block_fp8_matmul(
+    A,
+    B,
+    As,
+    Bs,
+    block_size=[128, 128],
+    bias=None,
+    transpose_x=False,
+    transpose_y=True,
+    output_dtype="float16",
+    act="identity",
+):
+    """This function performs matrix multiplication with block-wise quantization using native paddle.
+
+    It takes two input tensors `A` and `B` with scales `As` and `Bs`.
+    The output is returned in the specified `output_dtype`.
+    """
+
+    A = A.cast(paddle.float32)
+    B = B.cast(paddle.float32)
+    assert A.shape[-1] == B.shape[-1]
+    assert len(block_size) == 2
+    block_n, block_k = block_size[0], block_size[1]
+    assert (A.shape[-1] + block_k - 1) // block_k == As.shape[-1]
+    assert A.shape[:-1] == As.shape[:-1]
+
+    M = A.numel() // A.shape[-1]
+    N, K = B.shape
+    origin_C_shape = A.shape[:-1] + [N]
+    A = A.reshape([M, A.shape[-1]])
+    As = As.reshape([M, As.shape[-1]])
+    n_tiles = (N + block_n - 1) // block_n
+    k_tiles = (K + block_k - 1) // block_k
+    assert n_tiles == Bs.shape[0]
+    assert k_tiles == Bs.shape[1]
+
+    C_shape = [M, N]
+    C = paddle.zeros(C_shape, dtype=paddle.float32)
+    A_tiles = [A[:, i * block_k : min((i + 1) * block_k, K)] for i in range(k_tiles)]
+    B_tiles = [
+        [
+            B[
+                j * block_n : min((j + 1) * block_n, N),
+                i * block_k : min((i + 1) * block_k, K),
+            ]
+            for i in range(k_tiles)
+        ]
+        for j in range(n_tiles)
+    ]
+    C_tiles = [C[:, j * block_n : min((j + 1) * block_n, N)] for j in range(n_tiles)]
+    As_tiles = [As[:, i : i + 1] for i in range(k_tiles)]
+
+    for i in range(k_tiles):
+        for j in range(n_tiles):
+            a = A_tiles[i]
+            b = B_tiles[j][i]
+            c = C_tiles[j]
+            s = As_tiles[i] * Bs[j][i]
+            c[:, :] += paddle.matmul(a, b.transpose([1, 0])) * s
+    C = C.reshape(origin_C_shape).cast(output_dtype)
+    return C
