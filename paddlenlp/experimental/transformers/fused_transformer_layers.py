@@ -3513,24 +3513,24 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 if self.config.mla_config.q_lora_rank is None:
                     q_proj_weight_scale_attr = self.get_attr(self.config.mla_config.q_proj_weight_scale_attrs, i)
                     q_proj_weight_scale = self.create_parameter(
-                        shape=[self.num_heads * (self.config.mla_config.qk_head_dim)],
+                        shape=self.get_scale_shape(self.q_proj_weight_shape),
                         attr=q_proj_weight_scale_attr,
-                        dtype=self.weight_scale_dtype,
+                        dtype="float32",
                         is_bias=False,
                     )
                 else:
                     q_a_proj_weight_scale_attr = self.get_attr(self.config.mla_config.q_a_proj_weight_scale_attrs, i)
                     q_b_proj_weight_scale_attr = self.get_attr(self.config.mla_config.q_b_proj_weight_scale_attrs, i)
                     q_a_proj_weight_scale = self.create_parameter(
-                        shape=[self.config.mla_config.q_lora_rank],
+                        shape=self.get_scale_shape(self.q_a_proj_weight_shape),
                         attr=q_a_proj_weight_scale_attr,
-                        dtype=self.weight_scale_dtype,
+                        dtype="float32",
                         is_bias=False,
                     )
                     q_b_proj_weight_scale = self.create_parameter(
-                        shape=[self.num_heads * (self.config.mla_config.qk_head_dim)],
+                        shape=self.get_scale_shape(self.q_b_proj_weight_shape),
                         attr=q_b_proj_weight_scale_attr,
-                        dtype=self.weight_scale_dtype,
+                        dtype="float32",
                         is_bias=False,
                     )
 
@@ -3540,17 +3540,15 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 kv_b_proj_weight_scale_attr = self.get_attr(self.config.mla_config.kv_b_proj_weight_scale_attrs, i)
 
                 kv_a_proj_with_mqa_weight_scale = self.create_parameter(
-                    shape=[self.config.mla_config.kv_lora_rank + self.config.mla_config.qk_rope_head_dim],
+                    shape=self.get_scale_shape(self.kv_a_proj_with_mqa_weight_shape),
                     attr=kv_a_proj_with_mqa_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
                 kv_b_proj_weight_scale = self.create_parameter(
-                    shape=[
-                        self.num_heads * (self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim)
-                    ],
+                    shape=self.get_scale_shape(self.kv_b_proj_weight_shape),
                     attr=kv_b_proj_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
             else:
@@ -3578,11 +3576,9 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 )
             else:
                 ffn1_weight_scale = self.create_parameter(
-                    shape=[self.intermediate_size * 2]
-                    if self.config.activation.endswith("glu")
-                    else [self.intermediate_size],
+                    shape=self.get_scale_shape(self.ffn1_weight_shape, ffn1=True),
                     attr=ffn1_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
 
@@ -3595,38 +3591,25 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 )
             else:
                 ffn2_weight_scale = self.create_parameter(
-                    shape=[self.embed_dim],
+                    shape=self.get_scale_shape(self.ffn2_weight_shape, ffn1=True),
                     attr=ffn2_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
 
             shared_expert_ffn1_weight_scale = None
             shared_expert_ffn2_weight_scale = None
-            # if self.config.moe_config.use_shared_expert(i):
-            #     shared_expert_ffn1_weight_scale = self.create_parameter(
-            #         shape=self.get_scale_shape(self.shared_expert_ffn1_weight_shape),
-            #         attr=shared_expert_ffn1_weight_scale_attr,
-            #         dtype="float32",
-            #         is_bias=False,
-            #     )
-            #     shared_expert_ffn2_weight_scale = self.create_parameter(
-            #         shape=self.get_scale_shape(self.shared_expert_ffn2_weight_shape),
-            #         attr=shared_expert_ffn2_weight_scale_attr,
-            #         dtype="float32",
-            #         is_bias=False,
-            #     )
             if self.config.moe_config.use_shared_expert(i):
                 shared_expert_ffn1_weight_scale = self.create_parameter(
-                    shape=[self.config.moe_config.shared_expert_intermediate_size * 2],
+                    shape=self.get_scale_shape(self.shared_expert_ffn1_weight_shape),
                     attr=shared_expert_ffn1_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
                 shared_expert_ffn2_weight_scale = self.create_parameter(
-                    shape=[self.embed_dim],
+                    shape=self.get_scale_shape(self.shared_expert_ffn2_weight_shape),
                     attr=shared_expert_ffn2_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
 
@@ -3776,7 +3759,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                     q_proj_weight = self.create_parameter(
                         shape=self.q_proj_weight_shape,
                         attr=q_proj_weight_attr,
-                        dtype="int8",
+                        dtype=self.fp8_type,
                         is_bias=False,
                     )
                 else:
@@ -3786,7 +3769,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                     q_a_proj_weight = self.create_parameter(
                         shape=self.q_a_proj_weight_shape,
                         attr=q_a_proj_weight_attr,
-                        dtype="int8",
+                        dtype=self.fp8_type,
                         is_bias=False,
                     )
                     q_a_layernorm_weight = self.create_parameter(
@@ -3798,7 +3781,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                     q_b_proj_weight = self.create_parameter(
                         shape=self.q_b_proj_weight_shape,
                         attr=q_b_proj_weight_attr,
-                        dtype="int8",
+                        dtype=self.fp8_type,
                         is_bias=False,
                     )
 
@@ -3811,7 +3794,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 kv_a_proj_with_mqa_weight = self.create_parameter(
                     shape=self.kv_a_proj_with_mqa_weight_shape,
                     attr=kv_a_proj_with_mqa_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                     is_bias=False,
                 )
                 kv_a_layernorm_weight = self.create_parameter(
@@ -3823,7 +3806,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 kv_b_proj_weight = self.create_parameter(
                     shape=self.kv_b_proj_weight_shape,
                     attr=kv_b_proj_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                     is_bias=False,
                 )
             else:
@@ -3869,13 +3852,13 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 ffn1_weight = self.create_parameter(
                     shape=self.ffn1_weight_shape,
                     attr=ffn1_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                     is_bias=False,
                 )
                 ffn2_weight = self.create_parameter(
                     shape=self.ffn2_weight_shape,
                     attr=ffn2_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                     is_bias=False,
                 )
 
@@ -3903,7 +3886,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 shared_expert_ffn2_weight = self.create_parameter(
                     shape=self.shared_expert_ffn2_weight_shape,
                     attr=shared_expert_ffn2_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                 )
                 if self.config.moe_config.shared_expert_with_gate:
                     shared_expert_gate_weight = self.create_parameter(
@@ -3977,120 +3960,120 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
     def get_weight_create_dype(self):
         return "float8_e4m3fn"
 
-    # def compute_qkv_linear(self, ln_out, i):
-    #     ln_out_fp8, ln_out_scale = dynamic_quant(ln_out, self.config.weight_block_size)
-    #     if self.config.mla_config.use_mla():
-    #         if self.config.mla_config.q_lora_rank is not None:
-    #             query = cutlass_fp8_gemm(
-    #                 x=ln_out_fp8,
-    #                 y=self.q_a_proj_weights[i],
-    #                 x_s=ln_out_scale,
-    #                 y_s=self.q_a_proj_weights_scale[i],
-    #                 bias=None,
-    #                 output_dtype=self._dtype,
-    #                 act="identity",
-    #                 weight_block_size=self.config.weight_block_size,
-    #             )
+    def compute_qkv_linear(self, ln_out, i):
+        ln_out_fp8, ln_out_scale = dynamic_quant(ln_out, self.config.weight_block_size)
+        if self.config.mla_config.use_mla():
+            if self.config.mla_config.q_lora_rank is not None:
+                query = cutlass_fp8_gemm(
+                    x=ln_out_fp8,
+                    y=self.q_a_proj_weights[i],
+                    x_s=ln_out_scale,
+                    y_s=self.q_a_proj_weights_scale[i],
+                    bias=None,
+                    output_dtype=self._dtype,
+                    act="identity",
+                    weight_block_size=self.config.weight_block_size,
+                )
 
-    #             query = self.norm_func(
-    #                 x=query,
-    #                 norm_weight=self.q_a_layernorm_weights[i],
-    #                 norm_bias=None,
-    #                 epsilon=self._epsilon,
-    #                 begin_norm_axis=1,
-    #             )[0]
-    #             query = cutlass_fp8_gemm(
-    #                 x=query,
-    #                 y=self.q_b_proj_weights[i],
-    #                 y_s=self.q_b_proj_weights_scale[i],
-    #                 bias=None,
-    #                 output_dtype=self._dtype,
-    #                 act="identity",
-    #                 weight_block_size=self.config.weight_block_size,
-    #             )
-    #         else:
-    #             query = cutlass_fp8_gemm(
-    #                 x=ln_out_fp8,
-    #                 y=self.q_proj_weights[i],
-    #                 x_s=ln_out_scale,
-    #                 y_s=self.q_proj_weights_scale[i],
-    #                 bias=None,
-    #                 output_dtype=self._dtype,
-    #                 act="identity",
-    #                 weight_block_size=self.config.weight_block_size,
-    #             )
+                query = self.norm_func(
+                    x=query,
+                    norm_weight=self.q_a_layernorm_weights[i],
+                    norm_bias=None,
+                    epsilon=self._epsilon,
+                    begin_norm_axis=1,
+                )[0]
+                query = cutlass_fp8_gemm(
+                    x=query,
+                    y=self.q_b_proj_weights[i],
+                    y_s=self.q_b_proj_weights_scale[i],
+                    bias=None,
+                    output_dtype=self._dtype,
+                    act="identity",
+                    weight_block_size=self.config.weight_block_size,
+                )
+            else:
+                query = cutlass_fp8_gemm(
+                    x=ln_out_fp8,
+                    y=self.q_proj_weights[i],
+                    x_s=ln_out_scale,
+                    y_s=self.q_proj_weights_scale[i],
+                    bias=None,
+                    output_dtype=self._dtype,
+                    act="identity",
+                    weight_block_size=self.config.weight_block_size,
+                )
 
-    #         query = query.reshape([-1, self.num_heads, self.config.mla_config.qk_head_dim])
-    #         query_nope, query_pe = paddle.split(
-    #             query, [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.qk_rope_head_dim], axis=-1
-    #         )
+            query = query.reshape([-1, self.num_heads, self.config.mla_config.qk_head_dim])
+            query_nope, query_pe = paddle.split(
+                query, [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.qk_rope_head_dim], axis=-1
+            )
 
-    #         compressed_kv = cutlass_fp8_gemm(
-    #             x=ln_out_fp8,
-    #             y=self.kv_a_proj_with_mqa_weights[i],
-    #             x_s=ln_out_scale,
-    #             y_s=self.kv_a_proj_with_mqa_weights_scale[i],
-    #             bias=None,
-    #             output_dtype=self._dtype,
-    #             act="identity",
-    #             weight_block_size=self.config.weight_block_size,
-    #         )
-    #         compressed_kv, key_pe = paddle.split(
-    #             compressed_kv, [self.config.mla_config.kv_lora_rank, self.config.mla_config.qk_rope_head_dim], axis=-1
-    #         )
-    #         key_pe = key_pe.reshape([-1, 1, self.config.mla_config.qk_rope_head_dim])
-    #         compressed_kv = self.norm_func(
-    #             x=compressed_kv,
-    #             norm_weight=self.kv_a_layernorm_weights[i],
-    #             norm_bias=None,
-    #             epsilon=self._epsilon,
-    #             begin_norm_axis=1,
-    #         )[0]
+            compressed_kv = cutlass_fp8_gemm(
+                x=ln_out_fp8,
+                y=self.kv_a_proj_with_mqa_weights[i],
+                x_s=ln_out_scale,
+                y_s=self.kv_a_proj_with_mqa_weights_scale[i],
+                bias=None,
+                output_dtype=self._dtype,
+                act="identity",
+                weight_block_size=self.config.weight_block_size,
+            )
+            compressed_kv, key_pe = paddle.split(
+                compressed_kv, [self.config.mla_config.kv_lora_rank, self.config.mla_config.qk_rope_head_dim], axis=-1
+            )
+            key_pe = key_pe.reshape([-1, 1, self.config.mla_config.qk_rope_head_dim])
+            compressed_kv = self.norm_func(
+                x=compressed_kv,
+                norm_weight=self.kv_a_layernorm_weights[i],
+                norm_bias=None,
+                epsilon=self._epsilon,
+                begin_norm_axis=1,
+            )[0]
 
-    #         key_value = cutlass_fp8_gemm(
-    #             x=compressed_kv,
-    #             y=self.kv_b_proj_weights[i],
-    #             y_s=self.kv_b_proj_weights_scale[i],
-    #             bias=None,
-    #             output_dtype=self._dtype,
-    #             act="identity",
-    #             weight_block_size=self.config.weight_block_size,
-    #         )
-    #         key_value = key_value.reshape(
-    #             [-1, self.num_heads, self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim]
-    #         )
-    #         key_nope, value = paddle.split(
-    #             key_value, [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.v_head_dim], axis=-1
-    #         )
+            key_value = cutlass_fp8_gemm(
+                x=compressed_kv,
+                y=self.kv_b_proj_weights[i],
+                y_s=self.kv_b_proj_weights_scale[i],
+                bias=None,
+                output_dtype=self._dtype,
+                act="identity",
+                weight_block_size=self.config.weight_block_size,
+            )
+            key_value = key_value.reshape(
+                [-1, self.num_heads, self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim]
+            )
+            key_nope, value = paddle.split(
+                key_value, [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.v_head_dim], axis=-1
+            )
 
-    #         query_pe, key_pe = self.config.rotary_emb(self.position_ids, query_pe, key_pe)
+            query_pe, key_pe = self.config.rotary_emb(self.position_ids, query_pe, key_pe)
 
-    #         query[..., self.config.mla_config.qk_nope_head_dim :] = query_pe
-    #         key = paddle.empty_like(query)
-    #         key[..., : self.config.mla_config.qk_nope_head_dim] = key_nope
-    #         key[..., self.config.mla_config.qk_nope_head_dim :] = key_pe
+            query[..., self.config.mla_config.qk_nope_head_dim :] = query_pe
+            key = paddle.empty_like(query)
+            key[..., : self.config.mla_config.qk_nope_head_dim] = key_nope
+            key[..., self.config.mla_config.qk_nope_head_dim :] = key_pe
 
-    #         qkv_out = paddle.concat(
-    #             [
-    #                 query.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
-    #                 key.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
-    #                 value.reshape([-1, self.num_heads * self.config.mla_config.v_head_dim]),
-    #             ],
-    #             axis=-1,
-    #         )
-    #     else:
-    #         qkv_out = cutlass_fp8_gemm(
-    #             x=ln_out_fp8,
-    #             y=self.qkv_weights[i],
-    #             x_s=ln_out_scale,
-    #             y_s=self.qkv_weights_scale[i],
-    #             bias=None,
-    #             output_dtype=self._dtype,
-    #             act="identity",
-    #             weight_block_size=self.config.weight_block_size,
-    #         )
+            qkv_out = paddle.concat(
+                [
+                    query.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
+                    key.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
+                    value.reshape([-1, self.num_heads * self.config.mla_config.v_head_dim]),
+                ],
+                axis=-1,
+            )
+        else:
+            qkv_out = cutlass_fp8_gemm(
+                x=ln_out_fp8,
+                y=self.qkv_weights[i],
+                x_s=ln_out_scale,
+                y_s=self.qkv_weights_scale[i],
+                bias=None,
+                output_dtype=self._dtype,
+                act="identity",
+                weight_block_size=self.config.weight_block_size,
+            )
 
-    #     return qkv_out
+        return qkv_out
 
     def compute_out_linear(self, fmha_out, i):
         out = cutlass_fp8_gemm(
@@ -4104,30 +4087,30 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         )
         return out
 
-    # def compute_ffn1(self, tmp_out, i):
-    #     out = cutlass_fp8_gemm(
-    #         x=tmp_out,
-    #         y=self.ffn1_weights[i],
-    #         y_s=self.ffn1_weights_scale[i],
-    #         bias=None,
-    #         output_dtype=self._dtype,
-    #         act="identity",
-    #         weight_block_size=self.config.weight_block_size,
-    #         ffn1=True,
-    #     )
-    #     return out
+    def compute_ffn1(self, tmp_out, i):
+        out = cutlass_fp8_gemm(
+            x=tmp_out,
+            y=self.ffn1_weights[i],
+            y_s=self.ffn1_weights_scale[i],
+            bias=None,
+            output_dtype=self._dtype,
+            act="identity",
+            weight_block_size=self.config.weight_block_size,
+            ffn1=True,
+        )
+        return out
 
-    # def compute_ffn2(self, ffn1_out, i):
-    #     out = cutlass_fp8_gemm(
-    #         x=ffn1_out,
-    #         y=self.ffn2_weights[i],
-    #         y_s=self.ffn2_weights_scale[i],
-    #         bias=None,
-    #         output_dtype=self._dtype,
-    #         act="identity",
-    #         weight_block_size=self.config.weight_block_size,
-    #     )
-    #     return out
+    def compute_ffn2(self, ffn1_out, i):
+        out = cutlass_fp8_gemm(
+            x=ffn1_out,
+            y=self.ffn2_weights[i],
+            y_s=self.ffn2_weights_scale[i],
+            bias=None,
+            output_dtype=self._dtype,
+            act="identity",
+            weight_block_size=self.config.weight_block_size,
+        )
+        return out
 
     def compute_qkv_linear(self, ln_out, i):
         if self.config.mla_config.use_mla():
@@ -4323,52 +4306,32 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         return fused_moe_out
 
     def compute_shared_expert(self, tmp_out, i):
-        use_fp8 = self.shared_expert_ffn1_weights[i].dtype == paddle.float8_e5m2
-        if use_fp8:
-            ffn1_out = cutlass_fp8_gemm(
-                x=tmp_out,
-                y=self.shared_expert_ffn1_weights[i],
-                y_s=self.shared_expert_ffn1_weights_scale[i],
-                bias=None,
-                output_dtype=self._dtype,
-                act="identity",
-                weight_block_size=self.config.weight_block_size,
-            )
-            ffn1_out = fused_bias_act(ffn1_out.cast(paddle.float32), None, act_method=self.activation)
-            ffn2_out = cutlass_fp8_gemm(
-                x=ffn1_out,
-                y=self.shared_expert_ffn2_weights[i],
-                y_s=self.shared_expert_ffn2_weights_scale[i],
-                bias=None,
-                output_dtype=self._dtype,
-                act="identity",
-                weight_block_size=self.config.weight_block_size,
-            )
-            if self.config.moe_config.shared_expert_with_gate:
-                assert False, "Not implemented yet"
-                gate_out = paddle.matmul(tmp_out, self.shared_expert_gate_weights[i])
-                gate_out = paddle.nn.functional.sigmoid(gate_out)
-                return gate_out * ffn2_out
-            return ffn2_out
-        else:
-            ffn1_out = weight_only_linear(
-                tmp_out,
-                weight=self.shared_expert_ffn1_weights[i],
-                weight_scale=self.shared_expert_ffn1_weights_scale[i],
-                weight_dtype=self.weight_dtype,
-            )
-            ffn1_out = fused_bias_act(ffn1_out, None, act_method=self.activation)
-            ffn2_out = weight_only_linear(
-                ffn1_out,
-                weight=self.shared_expert_ffn2_weights[i],
-                weight_scale=self.shared_expert_ffn2_weights_scale[i],
-                weight_dtype=self.weight_dtype,
-            )
-            if self.config.moe_config.shared_expert_with_gate:
-                gate_out = paddle.matmul(tmp_out, self.shared_expert_gate_weights[i])
-                gate_out = paddle.nn.functional.sigmoid(gate_out)
-                return gate_out * ffn2_out
-            return ffn2_out
+        ffn1_out = cutlass_fp8_gemm(
+            x=tmp_out,
+            y=self.shared_expert_ffn1_weights[i],
+            y_s=self.shared_expert_ffn1_weights_scale[i],
+            bias=None,
+            output_dtype=self._dtype,
+            act="identity",
+            weight_block_size=self.config.weight_block_size,
+        )
+        ffn1_out = fused_bias_act(ffn1_out, None, act_method=self.activation)
+
+        ffn2_out = cutlass_fp8_gemm(
+            x=ffn1_out,
+            y=self.shared_expert_ffn2_weights[i],
+            y_s=self.shared_expert_ffn2_weights_scale[i],
+            bias=None,
+            output_dtype=self._dtype,
+            act="identity",
+            weight_block_size=self.config.weight_block_size,
+        )
+        if self.config.moe_config.shared_expert_with_gate:
+            assert False, "Not implemented yet"
+            gate_out = paddle.matmul(tmp_out, self.shared_expert_gate_weights[i])
+            gate_out = paddle.nn.functional.sigmoid(gate_out)
+            return gate_out * ffn2_out
+        return ffn2_out
 
 
 def dynamic_quant(x, weight_block_size: list = [0, 0]):
