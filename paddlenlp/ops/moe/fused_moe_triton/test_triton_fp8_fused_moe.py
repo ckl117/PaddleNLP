@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import paddle
 import triton
 import triton.language as tl
+
 from csrc.gpu.moe.fused_moe_triton import fused_moe
 
 # Constants
@@ -110,7 +111,7 @@ def moe_fp8_no_block(i):
     start = time.time()
 
     out = fused_moe(
-        a, # bf16
+        a,  # bf16
         w1_fp8,
         w2_fp8,
         score,

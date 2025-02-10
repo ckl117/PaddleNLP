@@ -455,6 +455,7 @@ def moe_align_block_size(topk_ids, block_size: int, num_experts: int):
     )
     return sorted_ids, expert_ids, num_tokens_post_pad
 
+
 # 初步实现，后期可以换成cuda kernel，实现动态or静态
 def per_tensor_quant_fp8(x, scale=None):
     x_fp32 = x.cast("float32")
@@ -463,12 +464,13 @@ def per_tensor_quant_fp8(x, scale=None):
     x_q = x_q.clip(min=-448.0, max=448.0)
     return x_q.cast("float8_e4m3fn"), x_s
 
+
 def invoke_fused_moe_kernel(
     A,
     B,
     C,  # out
-    A_scale, #a1_scale
-    B_scale, # w1_sacle
+    A_scale,  # a1_scale
+    B_scale,  # w1_sacle
     topk_weights,
     topk_ids,
     sorted_token_ids,
@@ -828,7 +830,7 @@ def fused_moe(
     # renormalize和refactor
     if renormalize:
         topk_weights = topk_weights / topk_weights.sum(axis=-1, keepdim=True)
-    
+
     topk_weights = topk_weights * refactor
 
     return fused_experts_impl(
