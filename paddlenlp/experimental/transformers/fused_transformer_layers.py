@@ -3556,9 +3556,9 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
             else:
                 qkv_weight_scale_attr = self.get_attr(self.config.qkv_weight_scale_attrs, i)
                 qkv_weight_scale = self.create_parameter(
-                    shape=[(self.num_heads + 2 * self.kv_num_heads) * self.head_dim],
+                    shape=self.get_scale_shape(self.qkv_weight_shape),
                     attr=qkv_weight_scale_attr,
-                    dtype=self.weight_scale_dtype,
+                    dtype="float32",
                     is_bias=False,
                 )
 
@@ -3603,17 +3603,30 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
 
             shared_expert_ffn1_weight_scale = None
             shared_expert_ffn2_weight_scale = None
+            # if self.config.moe_config.use_shared_expert(i):
+            #     shared_expert_ffn1_weight_scale = self.create_parameter(
+            #         shape=self.get_scale_shape(self.shared_expert_ffn1_weight_shape),
+            #         attr=shared_expert_ffn1_weight_scale_attr,
+            #         dtype="float32",
+            #         is_bias=False,
+            #     )
+            #     shared_expert_ffn2_weight_scale = self.create_parameter(
+            #         shape=self.get_scale_shape(self.shared_expert_ffn2_weight_shape),
+            #         attr=shared_expert_ffn2_weight_scale_attr,
+            #         dtype="float32",
+            #         is_bias=False,
+            #     )
             if self.config.moe_config.use_shared_expert(i):
                 shared_expert_ffn1_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.shared_expert_ffn1_weight_shape),
+                    shape=[self.config.moe_config.shared_expert_intermediate_size * 2],
                     attr=shared_expert_ffn1_weight_scale_attr,
-                    dtype="float32",
+                    dtype=self.weight_scale_dtype,
                     is_bias=False,
                 )
                 shared_expert_ffn2_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.shared_expert_ffn2_weight_shape),
+                    shape=[self.embed_dim],
                     attr=shared_expert_ffn2_weight_scale_attr,
-                    dtype="float32",
+                    dtype=self.weight_scale_dtype,
                     is_bias=False,
                 )
 
@@ -3818,7 +3831,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 qkv_weight = self.create_parameter(
                     shape=self.qkv_weight_shape,
                     attr=qkv_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                     is_bias=False,
                 )
 
@@ -3869,6 +3882,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
             shared_expert_ffn1_weight = None
             shared_expert_ffn2_weight = None
             shared_expert_gate_weight = None
+            # fp8
             if self.config.moe_config.use_shared_expert(i):
                 if self.config.moe_config.shared_expert_with_gate:
                     shared_expert_gate_weight_attr = self.get_attr(
@@ -3884,12 +3898,12 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 shared_expert_ffn1_weight = self.create_parameter(
                     shape=self.shared_expert_ffn1_weight_shape,
                     attr=shared_expert_ffn1_weight_attr,
-                    dtype=self.fp8_type,
+                    dtype="int8",
                 )
                 shared_expert_ffn2_weight = self.create_parameter(
                     shape=self.shared_expert_ffn2_weight_shape,
                     attr=shared_expert_ffn2_weight_attr,
-                    dtype=self.fp8_type,
+                    dtype="int8",
                 )
                 if self.config.moe_config.shared_expert_with_gate:
                     shared_expert_gate_weight = self.create_parameter(
@@ -4277,53 +4291,21 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
             # 应用各种策略后重塑的scores
             scores = get_moe_scores(gate_out, self.config.moe_config, self.e_score_correction_biases[i])
 
-            use_fp8 = True
-            if use_fp8:
-                from paddlenlp.ops.moe.fused_moe_triton.fused_moe import fused_moe
+            from paddlenlp.ops.moe.fused_moe_triton.fused_moe import fused_moe
 
-                fused_moe_out = fused_moe(
-                    tmp_out,
-                    self.ffn1_weights[i],
-                    self.ffn2_weights[i],
-                    scores,
-                    self.config.moe_config.top_k,
-                    renormalize=self.config.moe_config.norm_topk_prob,
-                    use_fp8_w8a8=True,
-                    w1_scale=self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
-                    w2_scale=self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                    block_shape=self.config.weight_block_size,  # default block-wise, per-tensor is None
-                    refactor=self.config.moe_config.routed_scaling_factor,
-                )
-            else:
-                # topk在moe_dispatch中
-                (
-                    permute_input,
-                    token_nums_per_expert,
-                    permute_indices_per_token,
-                    expert_scales_float,
-                    top_k_indices,
-                ) = moe_dispatch(tmp_out, scores, self.config.moe_config.top_k, False, topk_only_mode=True)
-
-                ffn_out = moe_ffn(
-                    permute_input,
-                    token_nums_per_expert,
-                    self.ffn1_weights[i],
-                    self.ffn2_weights[i],
-                    self.ffn1_biases[i],
-                    self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
-                    self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                    "weight_only_int8" if hasattr(self, "quant_type") else "None",
-                )
-
-                fused_moe_out = moe_reduce(
-                    ffn_out,
-                    expert_scales_float,
-                    permute_indices_per_token,
-                    top_k_indices,
-                    self.ffn2_biases[i],
-                    norm_topk_prob=self.config.moe_config.norm_topk_prob,
-                    routed_scaling_factor=self.config.moe_config.routed_scaling_factor,  # reduce中会做topk个weight的norm和routed_scaling_factor
-                )
+            fused_moe_out = fused_moe(
+                tmp_out,
+                self.ffn1_weights[i],
+                self.ffn2_weights[i],
+                scores,
+                self.config.moe_config.top_k,
+                renormalize=self.config.moe_config.norm_topk_prob,
+                use_fp8_w8a8=True,
+                w1_scale=self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
+                w2_scale=self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
+                block_shape=self.config.weight_block_size,  # default block-wise, per-tensor is None
+                refactor=self.config.moe_config.routed_scaling_factor,
+            )
         else:
             fused_moe_out = fused_moe(
                 tmp_out,
@@ -4341,31 +4323,52 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         return fused_moe_out
 
     def compute_shared_expert(self, tmp_out, i):
-        ffn1_out = cutlass_fp8_gemm(
-            x=tmp_out,
-            y=self.shared_expert_ffn1_weights[i],
-            y_s=self.shared_expert_ffn1_weights_scale[i],
-            bias=None,
-            output_dtype=self._dtype,
-            act="identity",
-            weight_block_size=self.config.weight_block_size,
-        )
-        ffn1_out = fused_bias_act(ffn1_out, None, act_method=self.activation)
-        ffn2_out = cutlass_fp8_gemm(
-            x=ffn1_out,
-            y=self.shared_expert_ffn2_weights[i],
-            y_s=self.shared_expert_ffn2_weights_scale[i],
-            bias=None,
-            output_dtype=self._dtype,
-            act="identity",
-            weight_block_size=self.config.weight_block_size,
-        )
-        if self.config.moe_config.shared_expert_with_gate:
-            assert False, "Not implemented yet"
-            gate_out = paddle.matmul(tmp_out, self.shared_expert_gate_weights[i])
-            gate_out = paddle.nn.functional.sigmoid(gate_out)
-            return gate_out * ffn2_out
-        return ffn2_out
+        use_fp8 = self.shared_expert_ffn1_weights[i].dtype == paddle.float8_e5m2
+        if use_fp8:
+            ffn1_out = cutlass_fp8_gemm(
+                x=tmp_out,
+                y=self.shared_expert_ffn1_weights[i],
+                y_s=self.shared_expert_ffn1_weights_scale[i],
+                bias=None,
+                output_dtype=self._dtype,
+                act="identity",
+                weight_block_size=self.config.weight_block_size,
+            )
+            ffn1_out = fused_bias_act(ffn1_out.cast(paddle.float32), None, act_method=self.activation)
+            ffn2_out = cutlass_fp8_gemm(
+                x=ffn1_out,
+                y=self.shared_expert_ffn2_weights[i],
+                y_s=self.shared_expert_ffn2_weights_scale[i],
+                bias=None,
+                output_dtype=self._dtype,
+                act="identity",
+                weight_block_size=self.config.weight_block_size,
+            )
+            if self.config.moe_config.shared_expert_with_gate:
+                assert False, "Not implemented yet"
+                gate_out = paddle.matmul(tmp_out, self.shared_expert_gate_weights[i])
+                gate_out = paddle.nn.functional.sigmoid(gate_out)
+                return gate_out * ffn2_out
+            return ffn2_out
+        else:
+            ffn1_out = weight_only_linear(
+                tmp_out,
+                weight=self.shared_expert_ffn1_weights[i],
+                weight_scale=self.shared_expert_ffn1_weights_scale[i],
+                weight_dtype=self.weight_dtype,
+            )
+            ffn1_out = fused_bias_act(ffn1_out, None, act_method=self.activation)
+            ffn2_out = weight_only_linear(
+                ffn1_out,
+                weight=self.shared_expert_ffn2_weights[i],
+                weight_scale=self.shared_expert_ffn2_weights_scale[i],
+                weight_dtype=self.weight_dtype,
+            )
+            if self.config.moe_config.shared_expert_with_gate:
+                gate_out = paddle.matmul(tmp_out, self.shared_expert_gate_weights[i])
+                gate_out = paddle.nn.functional.sigmoid(gate_out)
+                return gate_out * ffn2_out
+            return ffn2_out
 
 
 def dynamic_quant(x, weight_block_size: list = [0, 0]):

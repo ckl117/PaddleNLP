@@ -573,7 +573,7 @@ def get_moe_configs(
     # directory
     json_file_name = get_config_file_name(E, N, dtype, [block_n, block_k])
 
-    config_file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "configs", json_file_name)
+    config_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", json_file_name)
     if os.path.exists(config_file_path):
         with open(config_file_path) as f:
             print("Using configuration from %s for MoE layer.", config_file_path)

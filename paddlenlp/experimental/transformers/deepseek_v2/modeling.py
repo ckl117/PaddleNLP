@@ -688,7 +688,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                 state_dict[f"{self.base_model_prefix}.layers.{idx}.self_attn.o_proj.weight"]
             ).cast(dtype)
 
-            if self.use_weight_only and not ("fp8" in self.quant_type):
+            if self.use_weight_only and ("fp8" not in self.quant_type):
                 linear_quanted_weight, linear_weight_scale = weight_quantize(linear_weight, algo=self.quant_algo)
                 self.transformer_block.linear_weights[idx].set_value(linear_quanted_weight)
                 self.transformer_block.linear_weights_scale[idx].set_value(linear_weight_scale)
@@ -861,7 +861,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     ).cast("float32")
                     self.transformer_block.e_score_correction_biases[idx].set_value(e_score_correction_bias)
 
-                if "fp8" in self.quant_type:
+                if "fp8" in self.quant_type and True:
                     fused_moe_ffn1_weight_quant = fused_moe_ffn1_weight.cast(paddle.float8_e4m3fn)
                     fused_moe_ffn2_weight_quant = fused_moe_ffn2_weight.cast(paddle.float8_e4m3fn)
                     assert (
@@ -908,7 +908,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     state_dict[f"{self.base_model_prefix}.layers.{idx}.mlp.shared_experts.down_proj.weight"]
                 ).cast(dtype)
 
-                if self.use_weight_only and not ("fp8" in self.quant_type):
+                if self.use_weight_only:
                     shared_expert_ffn1_quanted_weight, shared_expert_ffn1_weight_scale = weight_quantize(
                         shared_expert_ffn1_weight, algo=self.quant_algo
                     )
