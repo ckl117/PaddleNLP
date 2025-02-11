@@ -911,15 +911,6 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                         shared_expert_ffn2_weight_scale
                     )
                 elif "fp8" in self.quant_type:
-                    # shared-ffn1 wint8
-                    # shared_expert_ffn1_quanted_weight, shared_expert_ffn1_weight_scale = weight_quantize(
-                    #     shared_expert_ffn1_weight, algo=self.quant_algo
-                    # )
-                    # self.transformer_block.shared_expert_ffn1_weights[idx].set_value(shared_expert_ffn1_quanted_weight)
-                    # self.transformer_block.shared_expert_ffn1_weights_scale[idx].set_value(
-                    #     shared_expert_ffn1_weight_scale
-                    # )
-                    # shared-ffn1 fp8
                     shared_expert_ffn1_quanted_weight = (
                         paddle.to_tensor(concated_gate_up_weight).transpose((1, 0)).cast(paddle.float8_e4m3fn)
                     )
@@ -937,7 +928,6 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     shared_expert_ffn1_weight_scale = (
                         paddle.to_tensor(concated_gate_up_weight_scale).transpose((1, 0)).cast(paddle.float32)
                     )
-
                     self.transformer_block.shared_expert_ffn1_weights[idx].copy_(
                         shared_expert_ffn1_quanted_weight, False
                     )

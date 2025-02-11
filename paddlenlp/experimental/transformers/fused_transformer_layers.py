@@ -3584,14 +3584,14 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
 
             if self.config.moe_config.use_moe(i):
                 ffn2_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.moe_ffn2_weight_shape),
+                    shape=self.get_scale_shape(self.moe_ffn1_weight_shape, ffn1=True),
                     attr=ffn2_weight_scale_attr,
                     dtype="float32",
                     is_bias=False,
                 )
             else:
                 ffn2_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.ffn2_weight_shape, ffn1=True),
+                    shape=self.get_scale_shape(self.ffn2_weight_shape),
                     attr=ffn2_weight_scale_attr,
                     dtype="float32",
                     is_bias=False,
@@ -3601,7 +3601,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
             shared_expert_ffn2_weight_scale = None
             if self.config.moe_config.use_shared_expert(i):
                 shared_expert_ffn1_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.shared_expert_ffn1_weight_shape),
+                    shape=self.get_scale_shape(self.shared_expert_ffn1_weight_shape, ffn1=True),
                     attr=shared_expert_ffn1_weight_scale_attr,
                     dtype="float32",
                     is_bias=False,
@@ -3699,8 +3699,6 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
             if self.activation.endswith("glu")
             else [self.intermediate_size, self.embed_dim]
         )
-        self.ffn1_0_weight_shape = [self.intermediate_size, self.embed_dim]
-        self.ffn1_1_weight_shape = [self.intermediate_size, self.embed_dim]
 
         self.ffn2_weight_shape = [self.embed_dim, self.intermediate_size]
 
@@ -3881,7 +3879,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 shared_expert_ffn1_weight = self.create_parameter(
                     shape=self.shared_expert_ffn1_weight_shape,
                     attr=shared_expert_ffn1_weight_attr,
-                    dtype="int8",
+                    dtype=self.fp8_type,
                 )
                 shared_expert_ffn2_weight = self.create_parameter(
                     shape=self.shared_expert_ffn2_weight_shape,
@@ -4179,7 +4177,9 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 use_fp8_w8a8=True,
                 w1_scale=self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
                 w2_scale=self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                block_shape=self.config.weight_block_size,  # default block-wise, per-tensor is None
+                block_shape=self.config.weight_block_size
+                if sum(self.config.weight_block_size) != 0
+                else None,  # default block-wise, per-tensor is None
                 refactor=self.config.moe_config.routed_scaling_factor,
             )
         else:
