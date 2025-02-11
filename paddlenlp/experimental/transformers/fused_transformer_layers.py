@@ -3653,12 +3653,12 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
     def get_scale_shape(self, weight_shape: list, ffn1=False):
         scale_shape = [i for i in weight_shape]
         scale_shape[-2] = (
-            weight_shape[-2] // self.config.weight_block_size[0] if self.config.weight_block_size[0] != 0 else 1
+            (weight_shape[-2] // self.config.weight_block_size[0]) if self.config.weight_block_size[0] != 0 else 1
         )
         if ffn1 and self.config.weight_block_size[0] == 0:
             scale_shape[-2] *= 2
         scale_shape[-1] = (
-            weight_shape[-1] // self.config.weight_block_size[1] if self.config.weight_block_size[1] != 0 else 1
+            (weight_shape[-1] // self.config.weight_block_size[1]) if self.config.weight_block_size[1] != 0 else 1
         )
         return scale_shape
 
@@ -4112,113 +4112,6 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
         )
         return out
 
-    def compute_qkv_linear(self, ln_out, i):
-        if self.config.mla_config.use_mla():
-            if self.config.mla_config.q_lora_rank is not None:
-                query = weight_only_linear(
-                    ln_out,
-                    weight=self.q_a_proj_weights[i],
-                    weight_scale=self.q_a_proj_weights_scale[i],
-                    weight_dtype=self.weight_dtype,
-                )
-                query = self.norm_func(
-                    x=query,
-                    norm_weight=self.q_a_layernorm_weights[i],
-                    norm_bias=None,
-                    epsilon=self._epsilon,
-                    begin_norm_axis=1,
-                )[0]
-                query = weight_only_linear(
-                    query,
-                    weight=self.q_b_proj_weights[i],
-                    weight_scale=self.q_b_proj_weights_scale[i],
-                    weight_dtype=self.weight_dtype,
-                )
-            else:
-                query = weight_only_linear(
-                    ln_out,
-                    weight=self.q_proj_weights[i],
-                    weight_scale=self.q_proj_weights_scale[i],
-                    weight_dtype=self.weight_dtype,
-                )
-
-            query = query.reshape([-1, self.num_heads, self.config.mla_config.qk_head_dim])
-            query_nope, query_pe = query.split(
-                [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.qk_rope_head_dim], axis=-1
-            )
-
-            compressed_kv = weight_only_linear(
-                ln_out,
-                weight=self.kv_a_proj_with_mqa_weights[i],
-                weight_scale=self.kv_a_proj_with_mqa_weights_scale[i],
-                weight_dtype=self.weight_dtype,
-            )
-            compressed_kv, key_pe = compressed_kv.split(
-                [self.config.mla_config.kv_lora_rank, self.config.mla_config.qk_rope_head_dim], axis=-1
-            )
-            key_pe = key_pe.reshape([-1, 1, self.config.mla_config.qk_rope_head_dim])
-            compressed_kv = self.norm_func(
-                x=compressed_kv,
-                norm_weight=self.kv_a_layernorm_weights[i],
-                norm_bias=None,
-                epsilon=self._epsilon,
-                begin_norm_axis=1,
-            )[0]
-            key_value = weight_only_linear(
-                compressed_kv,
-                weight=self.kv_b_proj_weights[i],
-                weight_scale=self.kv_b_proj_weights_scale[i],
-                weight_dtype=self.weight_dtype,
-            )
-            key_value = key_value.reshape(
-                [-1, self.num_heads, self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim]
-            )
-            key_nope, value = key_value.split(
-                [self.config.mla_config.qk_nope_head_dim, self.config.mla_config.v_head_dim], axis=-1
-            )
-
-            query_pe, key_pe = self.config.rotary_emb(self.position_ids, query_pe, key_pe)
-
-            query[..., self.config.mla_config.qk_nope_head_dim :] = query_pe
-            key = paddle.empty_like(query)
-            key[..., : self.config.mla_config.qk_nope_head_dim] = key_nope
-            key[..., self.config.mla_config.qk_nope_head_dim :] = key_pe
-
-            qkv_out = paddle.concat(
-                [
-                    query.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
-                    key.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
-                    value.reshape([-1, self.num_heads * self.config.mla_config.v_head_dim]),
-                ],
-                axis=-1,
-            )
-        else:
-            qkv_out = weight_only_linear(
-                ln_out,
-                weight=self.qkv_weights[i],
-                bias=self.qkv_biases[i],
-                weight_scale=self.qkv_weights_scale[i],
-                weight_dtype=self.weight_dtype,
-            )
-
-        return qkv_out
-
-    def compute_ffn1(self, tmp_out, i):
-        return weight_only_linear(
-            tmp_out,
-            weight=self.ffn1_weights[i],
-            weight_scale=self.ffn1_weights_scale[i],
-            weight_dtype=self.weight_dtype,
-        )
-
-    def compute_ffn2(self, ffn1_out, i):
-        return weight_only_linear(
-            ffn1_out,
-            weight=self.ffn2_weights[i],
-            weight_scale=self.ffn2_weights_scale[i],
-            weight_dtype=self.weight_dtype,
-        )
-
     def compute_fused_moe(self, tmp_out, i):
         def get_moe_scores(
             gating_output: paddle.Tensor,
@@ -4286,7 +4179,9 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 use_fp8_w8a8=True,
                 w1_scale=self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
                 w2_scale=self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                block_shape=self.config.weight_block_size,  # default block-wise, per-tensor is None
+                block_shape=self.config.weight_block_size
+                if self.config.weight_block_size[0] > 0 and self.config.weight_block_size[0] > 0
+                else None,  # default block-wise, per-tensor is None
                 refactor=self.config.moe_config.routed_scaling_factor,
             )
         else:

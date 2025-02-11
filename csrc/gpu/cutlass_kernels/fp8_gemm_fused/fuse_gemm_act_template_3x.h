@@ -26,6 +26,9 @@
 #include "cutlass/gemm/kernel/tile_scheduler.hpp"
 #include "cutlass/util/packed_stride.hpp"
 
+#include "fp8_gemm_fused/c3x/scaled_mm.cuh"
+#include "cutlass_kernels/epilogue/scaled_mm_epilogues_c3x.hpp"
+
 using namespace cute;
 
 template <
@@ -157,3 +160,81 @@ bool dispatch_fuse_gemm_act_sm90(GemmEpilogueAllParams params){
   }
   return true;
 }
+
+
+template <
+  typename InputType = phi::dtype::float8_e4m3fn,
+  typename OutType = phi::dtype::float16,
+  bool hasbias = false,
+  typename TileShape = Shape<_128, _128, _128>,
+  typename ClusterShape = Shape<_2, _1, _1>,
+  typename KernelSchedule = cutlass::gemm::KernelTmaWarpSpecializedPingpongFP8FastAccum,
+  typename EpilogueSchedule = cutlass::epilogue::TmaWarpSpecialized,
+  typename SM = cutlass::arch::Sm90
+>
+bool dispatch_fp8_gemm_ptr_scale_sm90(GemmEpilogueAllParams params){
+  using ElementA = typename std::conditional_t<std::is_same_v<InputType, phi::dtype::float8_e4m3fn>,
+                                                              cutlass::float_e4m3_t,
+                                                              cutlass::float_e5m2_t>;
+  using ElementB = ElementA;
+  using ElementD = typename std::conditional_t<std::is_same_v<OutType, phi::dtype::bfloat16>,
+                                  cutlass::bfloat16_t,
+                                  cutlass::half_t>;
+  
+  using namespace pd;
+  using Epilogue = std::conditional_t<
+        hasbias,
+        c3x::ScaledEpilogueBias,
+        c3x::ScaledEpilogue>;
+
+  using Gemm =
+      cutlass_3x_gemm<ElementA, ElementD, Epilogue, TileShape, ClusterShape,
+                      KernelSchedule, EpilogueSchedule>;
+  
+  using GemmKernel = typename Gemm::GemmKernel;
+
+  using StrideA = cute::Stride<int64_t, cute::Int<1>, int64_t>;
+  using StrideB = cute::Stride<int64_t, cute::Int<1>, int64_t>;
+  using StrideD = typename Gemm::StrideD;
+
+  StrideA a_stride{lda, cute::Int<1>{}, 0};
+  StrideB b_stride{ldb, cute::Int<1>{}, 0};
+  StrideD d_stride{ldd, cute::Int<1>{}, cute::Int<0>{}};
+
+  typename GemmKernel::ProblemShape prob_shape = GemmKernel::ProblemShape{params.M, params.N, params.K, 1};
+  
+  auto a_ptr = static_cast<ElementAB*>(const_cast<void*>(params.A));
+  auto b_ptr = static_cast<ElementAB*>(const_cast<void*>(params.B));
+  typename GemmKernel::MainloopArguments mainloop_args{a_ptr, a_stride, b_ptr,
+                                                       b_stride};
+
+  auto d_ptr = static_cast<ElementD*>(params.D);
+  typename GemmKernel::EpilogueArguments epilogue_args{
+      Gemm::Epilogue::prepare_args(
+          std::forward<EpilogueArgs>(epilogue_params)...),
+      d_ptr, d_stride, d_ptr, d_stride};
+                                  
+  typename GemmKernel::Arguments args{cutlass::gemm::GemmUniversalMode::kGemm,
+                                      prob_shape, mainloop_args, epilogue_args};
+
+  // Launch the CUTLASS GEMM kernel.
+  using GemmOp = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
+  GemmOp gemm_op;
+  cutlass::Status status = gemm_op.can_implement(args);
+  if (status != cutlass::Status::kSuccess) {
+    std::cout << "Gemm::can_implement() failed. " << cutlassGetStatusString(status) << std::endl;
+    return false;
+  }
+  size_t workspace_size = GemmOp::get_workspace_size(args);
+  phi::Allocator* allocator = paddle::GetAllocator(params.place);
+  auto workspace = allocator->Allocate(workspace_size);
+
+  status = gemm_op(args, workspace->ptr(), params.stream);
+  if (status != cutlass::Status::kSuccess) {
+    std::cout << "Gemm::run() failed." << cutlassGetStatusString(status) << std::endl;
+    return false;
+  }
+  return true;
+}
+
+
