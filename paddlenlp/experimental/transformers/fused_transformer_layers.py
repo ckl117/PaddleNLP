@@ -1241,7 +1241,7 @@ class FusedMultiTransformerBase(Layer):
                 self.ffn1_biases[i],
                 self.ffn1_weights_scale[i] if hasattr(self, "ffn1_weights_scale") else None,
                 self.ffn2_weights_scale[i] if hasattr(self, "ffn2_weights_scale") else None,
-                "weight_only_int8" if hasattr(self, "quant_type") else "None",
+                self.quant_type if hasattr(self, "quant_type") else "None",
             )
 
             if e_score_correction_bias is not None:
@@ -1909,14 +1909,6 @@ class FusedMultiTransformerWeightOnly(FusedMultiTransformerBase):
             )
 
         return qkv_out
-
-    def compute_out_linear(self, fmha_out, i):
-        return weight_only_linear(
-            fmha_out,
-            weight=self.linear_weights[i],
-            weight_scale=self.linear_weights_scale[i],
-            weight_dtype=self.weight_dtype,
-        )
 
     def compute_ffn1(self, tmp_out, i):
         return weight_only_linear(
