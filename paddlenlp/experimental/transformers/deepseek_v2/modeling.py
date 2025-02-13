@@ -150,6 +150,65 @@ class DeepseekV2RMSNorm(nn.Layer):
         return paddle.incubate.nn.functional.fused_rms_norm(x, self.weight, None, self.eps, begin_norm_axis=1)[0]
 
 
+import re
+
+PTQ_KEY = (
+    "q_proj.weight",
+    "q_a_proj.weight",
+    "q_b_proj.weight",
+    "kv_a_proj_with_mqa.weight",  # but got k = 2048, n = 576
+    "kv_b_proj.weight",
+    "o_proj.weight",
+    "mlp.gate_proj.weight",
+    "mlp.up_proj.weight",
+    "mlp.down_proj.weight",  # but got k = 10944, n = 2048
+    "mlp.shared_experts.gate_proj.weight",
+    "mlp.shared_experts.up_proj.weight",
+    "mlp.shared_experts.down_proj.weight",
+    "mlp.experts.#.gate_proj.weight",
+    "mlp.experts.#.up_proj.weight",
+    "mlp.experts.#.down_proj.weight",
+)
+
+
+def matches_pattern(pattern, string):
+    # 将 `#` 替换为正则表达式中的通配符 `.*`，表示任意字符出现任意次数
+    escaped_pattern = re.escape(pattern).replace(r"\#", ".*")
+    # 在字符串开头和结尾添加 `^` 和 `$`，表示完整匹配
+    # full_pattern = f'^{escaped_pattern}$'
+    # 编译正则表达式
+    regex = re.compile(escaped_pattern)
+    # 使用正则表达式进行匹配
+    return regex.search(string) is not None
+
+
+def block_quant(input_tensor, weight_block_size=[128, 128]):
+    assert (
+        weight_block_size[0] == 128 and weight_block_size[1] == 128
+    ), f"Expected weight_block_size == [128, 128], but got {weight_block_size}"
+    n, k = input_tensor.shape
+    block_size_n, block_size_k = weight_block_size
+    # assert n % block_size_n == 0 and k % block_size_k == 0, f"Expected n % {block_size_n} == 0 and k % {block_size_k} == 0"
+    num_blocks_rows = (n + block_size_n - 1) // block_size_n
+    num_blocks_cols = (k + block_size_k - 1) // block_size_k
+    quant_data = paddle.zeros([n, k], dtype=paddle.float32)
+    quant_scale = paddle.ones([num_blocks_rows, num_blocks_cols], dtype=paddle.float32)
+    tensor_fp32 = paddle.cast(input_tensor, paddle.float32)
+    for row in range(quant_scale.shape[0]):
+        start_row = row * block_size_n
+        end_row = min((row + 1) * block_size_n, n)
+        for col in range(quant_scale.shape[1]):
+            start_col = col * block_size_k
+            end_col = min((col + 1) * block_size_k, k)
+            data = tensor_fp32[start_row:end_row, start_col:end_col]
+            max_val = data.abs().max()
+            scale = max_val.clip(0.000001) / 448.0
+            quant_scale[row, col] = scale
+            quant_val = paddle.clip(data / scale, min=-448.0, max=448.0)
+            quant_data[start_row:end_row, start_col:end_col] = quant_val
+    return quant_data, quant_scale
+
+
 @register_base_model
 class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
     def __init__(self, config: DeepseekV2Config, base_model_prefix: str):
@@ -507,6 +566,18 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
 
     @paddle.no_grad()
     def set_state_dict(self, state_dict):
+        if "fp8" in self.quant_type:
+            scale_dict = {}
+            for k, v in state_dict.items():
+                for quant_key in PTQ_KEY:
+                    if matches_pattern(quant_key, k):
+                        if self.weight_block_size[0] == 128 and self.weight_block_size[1] == 128:
+                            quant_tensor, scale = block_quant(paddle.to_tensor(v), self.weight_block_size)
+                            state_dict[k] = quant_tensor.cast(paddle.get_default_dtype()).numpy()
+                            scale_dict[k + "_scale_inv"] = scale.numpy()
+                            break
+            state_dict.update(scale_dict)
+
         self.transformer_block.init_weight()
 
         dtype = paddle.get_default_dtype()

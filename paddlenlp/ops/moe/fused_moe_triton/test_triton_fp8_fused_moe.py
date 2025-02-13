@@ -25,7 +25,7 @@ import paddle
 import triton
 import triton.language as tl
 
-from csrc.gpu.moe.fused_moe_triton import fused_moe
+from paddlenlp.ops.moe.fused_moe_triton.fused_moe import fused_moe
 
 # Constants
 DTYPES = paddle.bfloat16

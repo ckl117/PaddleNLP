@@ -3584,7 +3584,7 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
 
             if self.config.moe_config.use_moe(i):
                 ffn2_weight_scale = self.create_parameter(
-                    shape=self.get_scale_shape(self.moe_ffn1_weight_shape, ffn1=True),
+                    shape=self.get_scale_shape(self.moe_ffn2_weight_shape, ffn1=True),
                     attr=ffn2_weight_scale_attr,
                     dtype="float32",
                     is_bias=False,
@@ -3651,15 +3651,13 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                 self._add_parameter(shared_expert_ffn2_weight_scale)
 
     def get_scale_shape(self, weight_shape: list, ffn1=False):
+        n, k = weight_shape[-2:]
+        block_k, block_n = self.config.weight_block_size
         scale_shape = [i for i in weight_shape]
-        scale_shape[-2] = (
-            weight_shape[-2] // self.config.weight_block_size[0] if self.config.weight_block_size[0] != 0 else 1
-        )
-        if ffn1 and self.config.weight_block_size[0] == 0:
+        scale_shape[-2] = (n + block_n - 1) // block_n if block_n != 0 else 1
+        if ffn1 and (block_k + block_n) == 0:
             scale_shape[-2] *= 2
-        scale_shape[-1] = (
-            weight_shape[-1] // self.config.weight_block_size[1] if self.config.weight_block_size[1] != 0 else 1
-        )
+        scale_shape[-1] = (k + block_k - 1) // block_k if block_k != 0 else 1
         return scale_shape
 
     def init_weight_shape(self, config):
