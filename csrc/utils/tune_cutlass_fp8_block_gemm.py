@@ -35,7 +35,7 @@ def gemm(m, n, k):
     a_scale = paddle.randn([m, k // 128], dtype="float32")
     b_scale = paddle.randn([n // 128, k // 128], dtype="float32")
     res = cutlass_fp8_fp8_half_block_gemm_fused(
-        A, a_scale, B, b_scale, bias=None, transpose_x=False, transpose_y=True, output_dtype="bfloat16", act="identity"
+        A, B, a_scale, b_scale, bias=None, transpose_x=False, transpose_y=True, output_dtype="float16", act="identity"
     )
     return res
 
