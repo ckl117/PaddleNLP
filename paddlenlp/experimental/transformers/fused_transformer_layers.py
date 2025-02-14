@@ -4436,6 +4436,12 @@ class FusedBlockMultiTransformerFP8Fake(FusedBlockMultiTransformer):
                     refactor=self.config.moe_config.routed_scaling_factor,
                 )
             else:
+                from paddle.incubate.nn.functional import (
+                    moe_dispatch,
+                    moe_ffn,
+                    moe_reduce,
+                )
+
                 # topk 在 moe_dispatch 中
                 (
                     permute_input,
