@@ -545,13 +545,12 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             scale_dict = {}
             for k, v in state_dict.items():
                 scale_key = k + "_scale_inv"
-                if len(v.shape) != 2:
-                    continue
-                if k.endswith("weight") and state_dict.get(scale_key) is not None:
-                    continue
-                quant_tensor, scale = block_quant(paddle.to_tensor(v), self.weight_block_size)
-                state_dict[k] = quant_tensor.cast(paddle.get_default_dtype()).numpy()
-                scale_dict[k + "_scale_inv"] = scale.numpy()
+                if k.endswith("weight") and "proj" in k:
+                    if state_dict.get(scale_key) is not None:
+                        continue
+                    quant_tensor, scale = block_quant(paddle.to_tensor(v), self.weight_block_size)
+                    state_dict[k] = quant_tensor.cast(paddle.get_default_dtype()).numpy()
+                    scale_dict[k + "_scale_inv"] = scale.numpy()
             state_dict.update(scale_dict)
 
         self.transformer_block.init_weight()
@@ -569,8 +568,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
         if self.use_weight_only:
             logger.info("weight only is enabled")
         elif "fp8" in self.quant_type:
-            weight_block_size_str = ",".join(self.weight_block_size)
-            logger.info(f"fp8 is enabled, weight_block_size = [{weight_block_size_str}]")
+            logger.info(f"fp8 is enabled, weight_block_size = {self.weight_block_size}")
         for idx in range(self.num_layers):
             logger.info(f"set state for layer {idx}")
 

@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# export PYTHONPATH=$PYTHONPATH:/home/gaoziyuan/PaddleNLP
-
-import functools
-import json
-import logging
-import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import paddle
-import triton
-import triton.language as tl
 
 from paddlenlp.ops.moe.fused_moe_triton.fused_moe import fused_moe
 
@@ -77,7 +68,7 @@ def moe(i):
     """Function to test bfloat16 fused MoE."""
     paddle.device.synchronize()
     start = time.time()
-    out = fused_moe(a, w1, w2, score, topk, renormalize=False)
+    fused_moe(a, w1, w2, score, topk, renormalize=False)
     paddle.device.synchronize()
     end = time.time()
     print(f"bf16 {i} : {((end - start) * 1000)} ms")
@@ -87,7 +78,7 @@ def moe_fp8(i):
     """Function to test FP8 block-wise fused MoE."""
     paddle.device.synchronize()
     start = time.time()
-    out = fused_moe(
+    fused_moe(
         a,
         w1_fp8,
         w2_fp8,
@@ -110,7 +101,7 @@ def moe_fp8_no_block(i):
     paddle.device.synchronize()
     start = time.time()
 
-    out = fused_moe(
+    fused_moe(
         a,  # bf16
         w1_fp8,
         w2_fp8,
@@ -127,8 +118,8 @@ def moe_fp8_no_block(i):
 
 
 # Run tests
-# for i in range(10):
-#     moe(i)
+for i in range(10):
+    moe(i)
 
 for i in range(10):
     moe_fp8(i)

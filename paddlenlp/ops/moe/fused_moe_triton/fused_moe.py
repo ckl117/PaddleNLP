@@ -18,9 +18,8 @@
 
 import functools
 import json
-import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import paddle
 import triton
@@ -489,8 +488,7 @@ def invoke_fused_moe_kernel(
         if block_shape is None:
             A, A_scale = per_tensor_quant_fp8(A, A_scale)
         else:
-            block_n, block_k = block_shape[0], block_shape[1]
-            # (TODO:后面使用凯伦算子代替)
+            block_k = block_shape[1]
             A, A_scale = per_token_group_quant_fp8(A, block_k)
 
     grid = lambda META: (
@@ -715,7 +713,6 @@ def fused_experts_impl(
 
     num_tokens, _ = hidden_states.shape
     E, N, _ = w1.shape
-    CHUNK_SIZE = 64 * 1024  # 65536
     M = num_tokens
 
     config_dtype = get_config_dtype_str(
