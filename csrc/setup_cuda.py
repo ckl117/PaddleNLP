@@ -103,6 +103,9 @@ sources = [
     "./gpu/step.cu",
     "./gpu/quant_int8.cu",
     "./gpu/dequant_int8.cu",
+    "./gpu/group_quant.cu",
+    "./gpu/get_position_ids.cu",
+    "./gpu/fused_rotary_position_encoding.cu",
     "./gpu/flash_attn_bwd.cc",
     "./gpu/tune_cublaslt_gemm.cu",
     "./gpu/sample_kernels/top_p_sampling_reject.cu",
@@ -167,11 +170,13 @@ if cc >= 90 and cuda_version >= 12.0:
     nvcc_compile_args += ["-DNDEBUG"]
     os.system("python utils/auto_gen_fp8_fp8_gemm_fused_kernels_sm90.py --cuda_arch 90")
     os.system("python utils/auto_gen_fp8_fp8_dual_gemm_fused_kernels_sm90.py --cuda_arch 90")
+    os.system("python utils/auto_gen_fp8_fp8_block_gemm_fused_kernels_sm90.py --cuda_arch 90")
     sources += find_end_files(fp8_auto_gen_directory, ".cu")
     sources += [
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_gemm.cu",
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_cuda_core_gemm.cu",
         "gpu/fp8_gemm_with_cutlass/fp8_fp8_fp8_dual_gemm.cu",
+        "gpu/fp8_gemm_with_cutlass/fp8_fp8_half_block_gemm.cu",
     ]
 
 setup(
