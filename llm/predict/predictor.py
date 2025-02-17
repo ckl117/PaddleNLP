@@ -760,10 +760,10 @@ class BlockInferencePredictorMixin(BasePredictor):
     def __init__(self, config: PredictorArgument, tokenizer: PretrainedTokenizer):
         BasePredictor.__init__(self, config, tokenizer)
 
-        self.num_layers = len(self.cache_kvs_shape) // 2
-        self.num_key_value_heads = self.cache_kvs_shape[0][-3]
-        self.head_dim = self.cache_kvs_shape[0][-1]
-        self.max_block_nums = self.cache_kvs_shape[0][0]
+        self.num_layers = len(self.cache_k_shapes)
+        self.num_key_value_heads = self.cache_k_shapes[0][-3]
+        self.head_dim = self.cache_k_shapes[0][-1]
+        self.max_block_nums = self.cache_k_shapes[0][0]
         self.batch_size = config.batch_size
         self.model_name_or_path = config.model_name_or_path
 
@@ -1023,13 +1023,20 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
         self.full_hidden_states = None
         if model is None:
             raise ValueError("model should be provided for DygraphBlockInferencePredictor")
-        self.cache_kvs_shape = model.get_cache_kvs_shape(model.config, config.batch_size)
+        self.cache_k_shapes, self.cache_v_shapes = model.get_cache_kvs_shape(model.config, config.batch_size)
         BlockInferencePredictorMixin.__init__(self, config, tokenizer)
 
         cachekv_dtype = self.dtype if config.cachekv_int8_type is None else "uint8"
-        self.cache_kvs = [
-            paddle.zeros(shape, dtype=cachekv_dtype) if shape is not None else None for shape in self.cache_kvs_shape
-        ]
+
+        self.cache_kvs = []
+        if self.cache_k_shapes and self.cache_v_shapes:
+            for cache_k_shape, cache_v_shape in zip(self.cache_k_shapes, self.cache_v_shapes):
+                self.cache_kvs.append(paddle.zeros(cache_k_shape, dtype=cachekv_dtype))
+                self.cache_kvs.append(paddle.zeros(cache_v_shape, dtype=cachekv_dtype))
+        else:
+            # for mla's absorption
+            assert self.cache_v_shapes is None
+            self.cache_kvs = [paddle.zeros(shape, dtype=cachekv_dtype) for shape in self.cache_k_shapes]
 
         self.model = model
 
@@ -1135,12 +1142,15 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
         tokenizer: PretrainedTokenizer = None,
         **kwargs,
     ):
-        self.cache_kvs_shape = kwargs.get("cache_kvs_shape", None)
+        self.cache_k_shapes = kwargs.get("cache_k_shapes", None)
+        self.cache_v_shapes = kwargs.get("cache_v_shapes", None)
         self.model_args = kwargs.get("model_args", None)
         self.return_full_hidden_states = config.return_full_hidden_states
         self.full_hidden_states = None
-        if self.cache_kvs_shape is None:
-            raise ValueError("cache_kvs_shape should be provided for StaticGraphBlockInferencePredictor")
+        if self.cache_k_shapes is None:
+            raise ValueError(
+                "cache_k_shapes and cache_v_shapes should be provided for StaticGraphBlockInferencePredictor"
+            )
         BlockInferencePredictorMixin.__init__(self, config, tokenizer)
 
         self._create_predictor(config)
@@ -1152,14 +1162,15 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
                 self.model_inputs["pre_caches_{}".format(i)] = self.pre_caches[i]
 
         cachekv_dtype = config.dtype if config.cachekv_int8_type is None else "uint8"
-        for i in range(len(self.cache_kvs_shape) // 2):
-            if self.cache_kvs_shape[2 * i] is not None:
+
+        for i in range(self.num_layers):
+            if self.cache_k_shapes is not None:
                 self.model_inputs["key_caches_{}".format(i)] = paddle.zeros(
-                    self.cache_kvs_shape[2 * i], dtype=cachekv_dtype
+                    self.cache_k_shapes[i], dtype=cachekv_dtype
                 )
-            if self.cache_kvs_shape[2 * i + 1] is not None:
+            if self.cache_v_shapes is not None:
                 self.model_inputs["value_caches_{}".format(i)] = paddle.zeros(
-                    self.cache_kvs_shape[2 * i + 1], dtype=cachekv_dtype
+                    self.cache_v_shapes[i], dtype=cachekv_dtype
                 )
 
         for i in range(self.num_layers):
@@ -1324,7 +1335,8 @@ class AutoPredictor:
             Predictor: The predictor.
         """
         model = kwargs.pop("model", None)
-        cache_kvs_shape = None
+        cache_k_shapes = None
+        cache_v_shapes = None
 
         # static or dynamic
         execute_mode = "Dygraph" if predictor_args.mode == "dynamic" else "StaticGraph"
@@ -1339,7 +1351,7 @@ class AutoPredictor:
             inference_mode = f"{attn_type}Inference"
 
             if predictor_args.mode == "static":
-                cache_kvs_shape = model.get_cache_kvs_shape(
+                cache_k_shapes, cache_v_shapes = model.get_cache_kvs_shape(
                     config, predictor_args.batch_size, predictor_args.total_max_length
                 )
         else:
@@ -1354,7 +1366,12 @@ class AutoPredictor:
 
         # instance
         predictor = predictor_class(
-            predictor_args, tokenizer=tokenizer, model=model, cache_kvs_shape=cache_kvs_shape, model_args=model_args
+            predictor_args,
+            tokenizer=tokenizer,
+            model=model,
+            cache_k_shapes=cache_k_shapes,
+            cache_v_shapes=cache_v_shapes,
+            model_args=model_args,
         )
         return predictor
 

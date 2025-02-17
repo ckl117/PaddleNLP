@@ -1014,6 +1014,7 @@ class FusedMultiTransformerBase(Layer):
 
             if self.config.mla_config.use_matrix_absorption:
                 return (query, query_nope, query_pe, compressed_kv, key_pe)
+
             key_value = paddle.matmul(compressed_kv, self.kv_b_proj_weights[i])
             key_value = key_value.reshape(
                 [-1, self.num_heads, self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim]
@@ -2719,10 +2720,13 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
             prefill_mla_write_cache,
         )
 
-        # breakpoint()
         query, query_nope, query_pe, compressed_kv, key_pe = qkv_out
-        assert caches[2 * i] is not None and caches[2 * i + 1] is None
-        latent_cache = caches[2 * i]
+        # assert caches[2 * i] is not None and caches[2 * i + 1] is None
+        latent_cache = caches[i]
+
+        fmha_out = paddle.zeros(
+            shape=[query.shape[0], self.num_heads * self.config.mla_config.v_head_dim], dtype=query.dtype
+        )
 
         if kwargs["max_enc_len_this_time"][0] > 0:  # prefill phase
             prefill_mla_write_cache(
@@ -2751,7 +2755,7 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
             key[..., : self.config.mla_config.qk_nope_head_dim] = key_nope
             key[..., self.config.mla_config.qk_nope_head_dim :] = key_pe
 
-            qkv_out = paddle.concat(
+            qkv_out_inner = paddle.concat(
                 [
                     query.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
                     key.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
@@ -2763,7 +2767,7 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
             from paddlenlp_ops import append_attention
 
             fmha_out_prefill = append_attention(
-                qkv_out,
+                qkv_out_inner,
                 self.config.mla_config.prefill_cache_k_buffer,
                 self.config.mla_config.prefill_cache_v_buffer,
                 kwargs.get("seq_lens_encoder", None),
@@ -2808,6 +2812,7 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
                 True,  # causal
                 self.config.speculate_config.speculate_method is not None,  # speculate_decoder
             )[0]
+            fmha_out = fmha_out + fmha_out_prefill
 
         if kwargs["max_dec_len_this_time"][0] > 0:  # decode phase
             decode_mla_write_cache(
@@ -2839,10 +2844,12 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
             # wk_b: [kv_lora_rank, num_heads, qk_nope_head_dim] -> [num_heads, qk_nope_head_dim, kv_lora_rank]
             # wv_b: [kv_lora_rank, num_heads, v_head_dim] -> [num_heads, kv_lora_rank, v_head_dim]
             wk_b = wk_b.transpose([1, 2, 0])
-            wv_b = wv_b.transpose([1, 0])
+            wv_b = wv_b.transpose([1, 0, 2])
 
-            q_nope_out = paddle.bmm(query_nope.transpose([1, 0]), wk_b).transpose(  # [num_head, n, qk_nope_head_dim]
-                [1, 0]
+            q_nope_out = paddle.bmm(
+                query_nope.transpose([1, 0, 2]), wk_b
+            ).transpose(  # [num_head, n, qk_nope_head_dim]
+                [1, 0, 2]
             )
 
             q_input[..., : self.config.mla_config.kv_lora_rank] = q_nope_out
@@ -2901,22 +2908,14 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
             )[0]
             fmha_out_decode = fmha_out_decode.reshape(
                 [-1, self.num_heads, self.config.mla_config.kv_lora_rank]
-            ).transpose([1, 0])
+            ).transpose([1, 0, 2])
             fmha_out_decode = (
                 paddle.bmm(fmha_out_decode, wv_b)
-                .transpose([1, 0])
+                .transpose([1, 0, 2])
                 .reshape([-1, self.num_heads * self.config.mla_config.v_head_dim])
             )
+            fmha_out = fmha_out + fmha_out_decode
 
-        if kwargs["max_enc_len_this_time"][0] > 0 and kwargs["max_dec_len_this_time"][0] > 0:
-            fmha_out = fmha_out_prefill + fmha_out_decode
-        elif kwargs["max_enc_len_this_time"][0] > 0:
-            fmha_out = fmha_out_prefill
-        elif kwargs["max_dec_len_this_time"][0] > 0:
-            fmha_out = fmha_out_decode
-        else:
-            assert False
-        # breakpoint()
         return fmha_out
 
     def compute_attn(
@@ -3114,10 +3113,14 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
             prefill_mla_write_cache,
         )
 
-        # breakpoint()
         query, query_nope, query_pe, compressed_kv, key_pe = qkv_out
         # assert caches[2 * i] is not None and caches[2 * i + 1] is None
-        latent_cache = caches[2 * i]
+
+        latent_cache = caches[i]
+
+        fmha_out = paddle.zeros(
+            shape=[query.shape[0], self.num_heads * self.config.mla_config.v_head_dim], dtype=query.dtype
+        )
 
         if kwargs["max_enc_len_this_time"][0] > 0:  # prefill phase
             prefill_mla_write_cache(
@@ -3151,7 +3154,7 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
             key[..., : self.config.mla_config.qk_nope_head_dim] = key_nope
             key[..., self.config.mla_config.qk_nope_head_dim :] = key_pe
 
-            qkv_out = paddle.concat(
+            qkv_out_inner = paddle.concat(
                 [
                     query.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
                     key.reshape([-1, self.num_heads * self.config.mla_config.qk_head_dim]),
@@ -3163,7 +3166,7 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
             from paddlenlp_ops import append_attention
 
             fmha_out_prefill = append_attention(
-                qkv_out,
+                qkv_out_inner,
                 self.config.mla_config.prefill_cache_k_buffer,
                 self.config.mla_config.prefill_cache_v_buffer,
                 kwargs.get("seq_lens_encoder", None),
@@ -3208,6 +3211,7 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
                 True,  # causal
                 self.config.speculate_config.speculate_method is not None,  # speculate_decoder
             )[0]
+            fmha_out = fmha_out + fmha_out_prefill
 
         if kwargs["max_dec_len_this_time"][0] > 0:  # decode phase
             decode_mla_write_cache(
@@ -3239,10 +3243,12 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
             # wk_b: [kv_lora_rank, num_heads, qk_nope_head_dim] -> [num_heads, qk_nope_head_dim, kv_lora_rank]
             # wv_b: [kv_lora_rank, num_heads, v_head_dim] -> [num_heads, kv_lora_rank, v_head_dim]
             wk_b = wk_b.transpose([1, 2, 0])
-            wv_b = wv_b.transpose([1, 0])
+            wv_b = wv_b.transpose([1, 0, 2])
 
-            q_nope_out = paddle.bmm(query_nope.transpose([1, 0]), wk_b).transpose(  # [num_head, n, qk_nope_head_dim]
-                [1, 0]
+            q_nope_out = paddle.bmm(
+                query_nope.transpose([1, 0, 2]), wk_b
+            ).transpose(  # [num_head, n, qk_nope_head_dim]
+                [1, 0, 2]
             )
 
             q_input[..., : self.config.mla_config.kv_lora_rank] = q_nope_out
@@ -3301,22 +3307,14 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
             )[0]
             fmha_out_decode = fmha_out_decode.reshape(
                 [-1, self.num_heads, self.config.mla_config.kv_lora_rank]
-            ).transpose([1, 0])
+            ).transpose([1, 0, 2])
             fmha_out_decode = (
                 paddle.bmm(fmha_out_decode, wv_b)
-                .transpose([1, 0])
+                .transpose([1, 0, 2])
                 .reshape([-1, self.num_heads * self.config.mla_config.v_head_dim])
             )
+            fmha_out = fmha_out + fmha_out_decode
 
-        if kwargs["max_enc_len_this_time"][0] > 0 and kwargs["max_dec_len_this_time"][0] > 0:
-            fmha_out = fmha_out_prefill + fmha_out_decode
-        elif kwargs["max_enc_len_this_time"][0] > 0:
-            fmha_out = fmha_out_prefill
-        elif kwargs["max_dec_len_this_time"][0] > 0:
-            fmha_out = fmha_out_decode
-        else:
-            assert False
-        # breakpoint()
         return fmha_out
 
 

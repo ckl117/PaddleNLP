@@ -1023,7 +1023,8 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
         else:
             max_block_nums = max_batch_size * max_block_per_seq
 
-        cache_kvs = []
+        cache_k_shapes = []
+        cache_v_shapes = []
         if config.mla_use_matrix_absorption:
             for _ in range(config.num_hidden_layers):
                 cache_latent_shape = [
@@ -1032,9 +1033,8 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
                     config.block_size,
                     config.kv_lora_rank + config.qk_rope_head_dim,
                 ]
-                cache_kvs.append(cache_latent_shape)
-                cache_kvs.append(None)
-            return cache_kvs
+                cache_k_shapes.append(cache_latent_shape)
+            return cache_k_shapes, None
         else:
             for _ in range(config.num_hidden_layers):
                 cache_k_shape = [
@@ -1049,9 +1049,9 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
                     config.block_size,
                     config.v_head_dim,
                 ]
-                cache_kvs.append(cache_k_shape)
-                cache_kvs.append(cache_v_shape)
-            return cache_kvs
+                cache_k_shapes.append(cache_k_shape)
+                cache_v_shapes.append(cache_v_shape)
+            return cache_k_shapes, cache_v_shapes
 
     def prepare_inputs_for_generation(self, **kwargs):
         # only last token for inputs_ids if cache is defined in kwargs
