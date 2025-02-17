@@ -474,16 +474,18 @@ class GenerationBlockInferenceModel(GenerationMixin):
 
         caches = []
         for i in range(len(cache_kvs_shapes) // 2):
-            caches.append(
-                paddle.static.InputSpec(
-                    shape=cache_kvs_shapes[2 * i], dtype=cachekv_dtype, name="key_caches_{}".format(i)
+            if cache_kvs_shapes[2 * i] is not None:
+                caches.append(
+                    paddle.static.InputSpec(
+                        shape=cache_kvs_shapes[2 * i], dtype=cachekv_dtype, name="key_caches_{}".format(i)
+                    )
                 )
-            )
-            caches.append(
-                paddle.static.InputSpec(
-                    shape=cache_kvs_shapes[2 * i + 1], dtype=cachekv_dtype, name="value_caches_{}".format(i)
+            if cache_kvs_shapes[2 * i + 1] is not None:
+                caches.append(
+                    paddle.static.InputSpec(
+                        shape=cache_kvs_shapes[2 * i + 1], dtype=cachekv_dtype, name="value_caches_{}".format(i)
+                    )
                 )
-            )
         if export_precache:
             src_mask_spec = paddle.static.InputSpec(shape=[None, 1, None, None], dtype=dtype, name="src_mask")
         else:
