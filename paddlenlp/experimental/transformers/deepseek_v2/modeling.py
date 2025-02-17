@@ -407,7 +407,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
         shared_expert_ffn1_weight_scale_attrs = None
         shared_expert_ffn2_weight_scale_attrs = None
 
-        if self.use_weight_only or "fp8" in self.quant_type:
+        if self.use_weight_only:
             if self.config.q_lora_rank is not None:
                 q_proj_weight_scale_attrs = [
                     paddle.ParamAttr(

@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Modified from: cutlass/gemm/collective/builders/sm90_gmma_builder.inl
-// clang-format off
+// Adapt from
+// https://github.com/vllm-project/vllm/blob/v0.7.2/csrc/cutlass_extensions/gemm/collective/collective_builder.hpp
+
 #pragma once
 
 #include "cutlass/gemm/collective/builders/sm90_gmma_builder.inl"

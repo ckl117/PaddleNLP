@@ -640,8 +640,6 @@ class FusedMultiTransformerBase(Layer):
 
         self.dropout_rate = config.dropout_rate
 
-        self.weight_scale_dtype = self._dtype
-
     def init_weight(self):
         self.qkv_weights = []
         self.linear_weights = []
@@ -1535,14 +1533,14 @@ class FusedMultiTransformerWeightOnly(FusedMultiTransformerBase):
             self.weight_dtype = "int8"
         elif self.quant_type == "weight_only_int4":
             self.weight_dtype = "int4"
-        elif self.quant_type == "a8w8_fp8":
-            self.weight_dtype = "int8"
         else:
             assert (
                 self.quant_type == "weight_only_int8" or self.quant_type == "weight_only_int4"
             ), "Expected quant_type equal to 'weight_only_int8' or 'weight_only_int4', but received {}".format(
                 self.quant_type
             )
+
+        self.weight_scale_dtype = self._dtype
         self.init_scale()
 
     def init_scale(self):
