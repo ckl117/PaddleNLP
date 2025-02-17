@@ -309,6 +309,15 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             )
             for idx in range(self.num_layers)
         ]
+        kv_b_proj_weight_original_attrs = None
+        if self.use_weight_only:
+            kv_b_proj_weight_original_attrs = [
+                paddle.ParamAttr(
+                    name=f"fuse{self.base_model_prefix}.{idx}.kv_b_proj_weight_original",
+                    initializer=paddle.nn.initializer.Constant(value=0),
+                )
+                for idx in range(self.num_layers)
+            ]
 
         out_proj_weight_attrs = [
             paddle.ParamAttr(
@@ -480,6 +489,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             kv_a_proj_with_mqa_weight_scale_attrs=kv_a_proj_with_mqa_weight_scale_attrs,
             kv_a_layernorm_weight_attrs=kv_a_layernorm_weight_attrs,
             kv_b_proj_weight_attrs=kv_b_proj_weight_attrs,
+            kv_b_proj_weight_original_attrs=kv_b_proj_weight_original_attrs,
             kv_b_proj_weight_scale_attrs=kv_b_proj_weight_scale_attrs,
         )
 
@@ -631,6 +641,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     kv_b_proj_weight, algo=self.quant_algo
                 )
                 self.transformer_block.kv_b_proj_weights[idx].set_value(kv_b_proj_quanted_weight)
+                self.transformer_block.kv_b_proj_weights_original[idx].set_value(kv_b_proj_weight)
                 self.transformer_block.kv_a_layernorm_weights[idx].set_value(kv_a_layernorm_weight)
                 self.transformer_block.kv_b_proj_weights_scale[idx].set_value(kv_b_proj_weight_scale)
             else:

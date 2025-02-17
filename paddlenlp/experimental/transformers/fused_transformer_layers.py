@@ -183,6 +183,7 @@ class MLAConfig:
     kv_a_proj_with_mqa_weight_scale_attrs: Optional[List[paddle.ParamAttr]] = None
     kv_a_layernorm_weight_attrs: List[paddle.ParamAttr] = None
     kv_b_proj_weight_attrs: List[paddle.ParamAttr] = None
+    kv_b_proj_weight_original_attrs: List[paddle.ParamAttr] = None
     kv_b_proj_weight_scale_attrs: Optional[List[paddle.ParamAttr]] = None
 
     def use_mla(self) -> bool:
@@ -654,6 +655,7 @@ class FusedMultiTransformerBase(Layer):
         self.kv_a_proj_with_mqa_weights = []
         self.kv_a_layernorm_weights = []
         self.kv_b_proj_weights = []
+        self.kv_b_proj_weights_original = []
 
         for i in range(self.num_layers):
             linear_weight_attr = self.get_attr(self.config.linear_weight_attrs, i)
@@ -699,6 +701,9 @@ class FusedMultiTransformerBase(Layer):
                 )
                 kv_a_layernorm_weight_attr = self.get_attr(self.config.mla_config.kv_a_layernorm_weight_attrs, i)
                 kv_b_proj_weight_attr = self.get_attr(self.config.mla_config.kv_b_proj_weight_attrs, i)
+                kv_b_proj_weight_original_attr = self.get_attr(
+                    self.config.mla_config.kv_b_proj_weight_original_attrs, i
+                )
 
                 kv_a_proj_with_mqa_weight = self.create_parameter(
                     shape=self.kv_a_proj_with_mqa_weight_shape,
@@ -718,6 +723,18 @@ class FusedMultiTransformerBase(Layer):
                     dtype=self.create_params_type,
                     is_bias=False,
                 )
+                kv_b_proj_weight_original = None
+                if kv_b_proj_weight_original_attr:
+                    kv_b_proj_weight_original = self.create_parameter(
+                        shape=[
+                            self.config.mla_config.kv_lora_rank,
+                            self.num_heads
+                            * (self.config.mla_config.qk_nope_head_dim + self.config.mla_config.v_head_dim),
+                        ],
+                        attr=kv_b_proj_weight_original_attr,
+                        dtype=self._dtype,
+                        is_bias=False,
+                    )
             else:
                 qkv_weight_attr = self.get_attr(self.config.qkv_weight_attrs, i)
                 qkv_weight = self.create_parameter(
@@ -826,6 +843,7 @@ class FusedMultiTransformerBase(Layer):
                 self.kv_a_proj_with_mqa_weights.append(kv_a_proj_with_mqa_weight)
                 self.kv_a_layernorm_weights.append(kv_a_layernorm_weight)
                 self.kv_b_proj_weights.append(kv_b_proj_weight)
+                self.kv_b_proj_weights_original.append(kv_b_proj_weight_original)
             else:
                 self.qkv_weights.append(qkv_weight)
 
@@ -849,6 +867,7 @@ class FusedMultiTransformerBase(Layer):
                 self._add_parameter(kv_a_proj_with_mqa_weight)
                 self._add_parameter(kv_a_layernorm_weight)
                 self._add_parameter(kv_b_proj_weight)
+                self._add_parameter(kv_b_proj_weight_original)
             else:
                 self._add_parameter(qkv_weight)
 
@@ -3097,7 +3116,7 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
 
         # breakpoint()
         query, query_nope, query_pe, compressed_kv, key_pe = qkv_out
-        assert caches[2 * i] is not None and caches[2 * i + 1] is None
+        # assert caches[2 * i] is not None and caches[2 * i + 1] is None
         latent_cache = caches[2 * i]
 
         if kwargs["max_enc_len_this_time"][0] > 0:  # prefill phase
@@ -3213,7 +3232,7 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
             )
             # kv_b_proj_weights: [kv_lora_rank, (qk_nope_head_dim + v_head_dim) * num_heads]
             wk_b, wv_b = (
-                self.kv_b_proj_weights[i]
+                self.kv_b_proj_weights_original[i]
                 .reshape([self.config.mla_config.kv_lora_rank, self.num_heads, -1])
                 .split([self.config.mla_config.qk_nope_head_dim, self.config.mla_config.v_head_dim], axis=-1)
             )
