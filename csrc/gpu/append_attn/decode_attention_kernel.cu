@@ -859,12 +859,11 @@ void DecodeMLAAttentionKernel(
         {DISPATCH_HEAD_DIM(head_dim_v, HEAD_DIM_V, 
           {DISPATCH_BLOCK_SIZE(block_size, BLOCK_SIZE, 
             {DISPATCH_NUM_STAGE(num_stage, NUM_STAGE,
-              {DISPATCH_CACHE_TYPE(cache_type, CacheTypeNow, CacheBytes,
-                {DISPATCH_DEAL_EACH_TIME(deal_each_time, DEAL_EACH_TIME,
-                  {DISPATCH_NUM_THREADS(num_threads, NUM_THREADS, 
-                    {MultiQueryDecoderAttention<T, GROUP_SIZE, HEAD_DIM_QK, HEAD_DIM_V, BLOCK_SIZE, CAUSAL, NUM_STAGE, CacheTypeNow, CacheBytes, DEAL_EACH_TIME, NUM_THREADS>(
-                    meta_data, stream, q, cache_k, cache_v, attn_mask, shift_bias, smooth_weight, seq_lens_q, seq_lens_kv, padding_offsets, cum_offsets, 
-                    block_table, max_seq_len, max_dec_len, rope_scale, rope_theta, softmax_scale, in_scale, out);})})})})})})})})});
+              {DISPATCH_DEAL_EACH_TIME(deal_each_time, DEAL_EACH_TIME,
+                {DISPATCH_NUM_THREADS(num_threads, NUM_THREADS, 
+                  {MultiQueryDecoderAttention<T, GROUP_SIZE, HEAD_DIM_QK, HEAD_DIM_V, BLOCK_SIZE, CAUSAL, NUM_STAGE, CacheType::CacheT, 16, DEAL_EACH_TIME, NUM_THREADS>(
+                  meta_data, stream, q, cache_k, cache_v, attn_mask, shift_bias, smooth_weight, seq_lens_q, seq_lens_kv, padding_offsets, cum_offsets, 
+                  block_table, max_seq_len, max_dec_len, rope_scale, rope_theta, softmax_scale, in_scale, out);})})})})})})})});
 }
 
 template void DecodeMLAAttentionKernel<paddle::bfloat16>(
