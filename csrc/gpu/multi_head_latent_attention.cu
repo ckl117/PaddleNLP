@@ -120,7 +120,7 @@ std::vector<paddle::Tensor> MultiHeadLatentAttentionKernel(
     } else {
       exec_stream = main_stream;
     }
-    std::cout << "dec_mla" << std::endl;
+    // std::cout << "dec_mla" << std::endl;
     DecodeMLAAttentionKernel<data_t>(
         meta_data,
         query, // [token_num, num_heads, head_dim]

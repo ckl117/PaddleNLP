@@ -1,3 +1,17 @@
+// Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
+// 
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// 
+//     http://www.apache.org/licenses/LICENSE-2.0
+// 
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "decode_attention_func.cuh"
 
 #define CHECK(call)                                                             \
@@ -851,7 +865,7 @@ void DecodeMLAAttentionKernel(
   //     cache_type = 1;
   //   }
   // }
-  std::cout << "cache_type: " << cache_type << ", group_size: " << group_size << std::endl;
+  // std::cout << "cache_type: " << cache_type << ", group_size: " << group_size << std::endl;
   // std::cout << "cache_type: " << cache_type << ", group_size: " << group_size << ", deal_each_time: " << deal_each_time << ", num_stage: " << num_stage;
   DISPATCH_CAUSAL(causal, CAUSAL,
     {DISPATCH_GQA_GROUP_SIZE(group_size, GROUP_SIZE,
