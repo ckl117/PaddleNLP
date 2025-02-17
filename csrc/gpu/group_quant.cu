@@ -14,6 +14,7 @@
 
 #include "helper.h"
 #include<string.h>
+#include <cuda_runtime.h>
 
 #ifdef PADDLE_WITH_HIP
 constexpr int32_t WARP_SIZE = 64; 
@@ -39,6 +40,9 @@ __inline__ __device__ T WarpReduceAbsMax(T val, unsigned lane_mask) {
 template <typename InType, typename OutType, int GroupSize>
 __global__ void GroupQuantKernel(const InType* input,
                                    const int64_t numel,
+                                   const int m,
+                                   const int n,
+                                   const bool transpose_scale,
                                    const float quant_max_bound,
                                    const float quant_min_bound,
                                    OutType* output,
@@ -50,8 +54,26 @@ __global__ void GroupQuantKernel(const InType* input,
   __shared__ float smem[GroupSize / WARP_SIZE];
 
   const int block_idx = blockIdx.x;
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+//   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const int row_idx = blockIdx.y;
+  const int batch_idx = blockIdx.z;
+  const int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
+  const int globalIdy = blockIdx.y * blockDim.y + threadIdx.y;
+  const int globalIdz = blockIdx.z * blockDim.z + threadIdx.z;
+  const int idx = batch_idx * m * n + row_idx * n + globalIdx;
+
+//   const int idx = globalIdz * (gridDim.x * blockDim.x * gridDim.y * blockDim.y) +
+//                     globalIdy * (gridDim.x * blockDim.x) +
+//                     globalIdx;
+
   if (idx >= numel) return;
+
+  int scale_idx = 0;
+  if (transpose_scale) {
+    scale_idx = batch_idx * m * n / GroupSize + block_idx * m + row_idx;
+  }else{
+    scale_idx = batch_idx * m * n / GroupSize + row_idx * n / GroupSize + block_idx;
+  }
 
   float in_val = static_cast<float>(input[idx]);
   float abs_max_val = abs(in_val);
@@ -70,16 +92,19 @@ __global__ void GroupQuantKernel(const InType* input,
   }
   __syncthreads();
   float scale = smem[0];
-  out_scale_data[block_idx] = scale;
   float quant_value = in_val / scale;
   quant_value = quant_value > quant_max_bound ? quant_max_bound : quant_value;
   quant_value = quant_value < quant_min_bound ? quant_min_bound : quant_value;
   output[idx] = static_cast<OutType>(quant_value);
+  if (threadIdx.x == 0) {
+    out_scale_data[scale_idx] = scale;
+  }
 }
 
 template <paddle::DataType InType, paddle::DataType OutType>
 std::vector<paddle::Tensor> LaunchGroupQuantKernel(const paddle::Tensor& x,
                                                    const int group_size,
+                                                   const bool transpose_scale,
                                                    const float quant_max_bound,
                                                    const float quant_min_bound) {
     typedef PDTraits<InType> in_traits;
@@ -95,20 +120,37 @@ std::vector<paddle::Tensor> LaunchGroupQuantKernel(const paddle::Tensor& x,
     std::vector<int64_t> scale_shape = x.shape();
 
     out = paddle::empty(out_shape, OutType, place);
+    int64_t batch = 1;
+    int64_t m = x.shape()[rank - 2];
+    int64_t n = x.shape()[rank - 1];
+    int64_t scale_n = n / group_size;
 
-    scale_shape[rank - 1] = scale_shape[rank - 1] / group_size;
+    if(transpose_scale){
+        scale_shape[rank - 2] = scale_n;
+        scale_shape[rank - 1] = m;
+    }else{
+        scale_shape[rank - 1] = scale_n;
+    }
+    
     scale_out = paddle::empty(scale_shape, paddle::DataType::FLOAT32, place);
 
     int64_t numel = x.numel();
-    int64_t block_per_grid = (numel + group_size - 1) / group_size;
+    // int64_t block_per_grid = (numel + group_size - 1) / group_size;
+    int64_t block_per_col = n / group_size;
+
+    dim3 threadsPerBlock(group_size, 1, 1);
+    dim3 block_per_grid(block_per_col, m, batch);
 
     typedef PDTraits<OutType> out_traits;
     typedef typename out_traits::DataType OutDataType;
     typedef typename out_traits::data_t out_data_t;
     
     if(group_size == 128){
-        GroupQuantKernel<InDataType, OutDataType, 128><<<block_per_grid, group_size, 0, stream>>>(reinterpret_cast<const InDataType*>(x.data<in_data_t>()),
+        GroupQuantKernel<InDataType, OutDataType, 128><<<block_per_grid, threadsPerBlock, 0, stream>>>(reinterpret_cast<const InDataType*>(x.data<in_data_t>()),
                             numel,
+                            m,
+                            n,
+                            transpose_scale,
                             quant_max_bound,
                             quant_min_bound,
                             reinterpret_cast<OutDataType*>(out.data<out_data_t>()),
@@ -122,11 +164,12 @@ std::vector<paddle::Tensor> LaunchGroupQuantKernel(const paddle::Tensor& x,
 template <paddle::DataType InType>
 std::vector<paddle::Tensor> LaunchGroupQuant(const paddle::Tensor& x,
                                              const int group_size,
+                                             const bool transpose_scale,
                                              const float quant_max_bound,
                                              const float quant_min_bound) {
 
     if(fabs(quant_max_bound - 448.0f) < 0.000001){
-        return LaunchGroupQuantKernel<InType, paddle::DataType::FLOAT8_E4M3FN>(x, group_size, quant_max_bound, quant_min_bound);
+        return LaunchGroupQuantKernel<InType, paddle::DataType::FLOAT8_E4M3FN>(x, group_size, transpose_scale, quant_max_bound, quant_min_bound);
     }else{
         PD_THROW("Only supported float8_e4m3fn quantization, please set quant_max_bound=448, quant_min_bound=-448.");
     }
@@ -136,32 +179,33 @@ std::vector<paddle::Tensor> LaunchGroupQuant(const paddle::Tensor& x,
 
 std::vector<paddle::Tensor> GroupQuant(const paddle::Tensor& x,
                                         const int group_size,
+                                        const bool transpose_scale,
                                         const float quant_max_bound,
                                         const float quant_min_bound) {
     if(x.dtype() == paddle::DataType::FLOAT32){
-        return LaunchGroupQuant<paddle::DataType::FLOAT32>(x, group_size, quant_max_bound, quant_min_bound);
+        return LaunchGroupQuant<paddle::DataType::FLOAT32>(x, group_size, transpose_scale, quant_max_bound, quant_min_bound);
     }else if(x.dtype() == paddle::DataType::FLOAT16){
-        return LaunchGroupQuant<paddle::DataType::FLOAT16>(x, group_size, quant_max_bound, quant_min_bound);
+        return LaunchGroupQuant<paddle::DataType::FLOAT16>(x, group_size, transpose_scale, quant_max_bound, quant_min_bound);
     }else if(x.dtype() == paddle::DataType::BFLOAT16){
-        return LaunchGroupQuant<paddle::DataType::BFLOAT16>(x, group_size, quant_max_bound, quant_min_bound);
+        return LaunchGroupQuant<paddle::DataType::BFLOAT16>(x, group_size, transpose_scale, quant_max_bound, quant_min_bound);
     }else{
         PD_THROW("Unsupported data type.");
     }
 }
 
-std::vector<std::vector<int64_t>> GroupQuantInferShape(const std::vector<int64_t>& input_shape, const int group_size, const float quant_max_bound,const float quant_min_bound) {
+std::vector<std::vector<int64_t>> GroupQuantInferShape(const std::vector<int64_t>& input_shape, const int group_size, const bool transpose_scale, const float quant_max_bound,const float quant_min_bound) {
     std::vector<int64_t> scale_shape = input_shape;
     int rank = input_shape.size();
-    // per tensor quant
-    if(group_size <= 0){
-        return {input_shape, {1}};
+    if(transpose_scale){
+        scale_shape[rank - 1] = input_shape[rank - 2];
+        scale_shape[rank - 2] = input_shape[rank - 1] / group_size;
+    }else{
+        scale_shape[rank - 1] = input_shape[rank - 1] / group_size;
     }
-    // per block quant: 1xgroup_size
-    scale_shape[rank - 1] = input_shape[rank - 1] / group_size;
     return {input_shape, scale_shape};
 }
 
-std::vector<paddle::DataType> GroupQuantInferDtype(const paddle::DataType& input_dtype, const int group_size, const float quant_max_bound,const float quant_min_bound) {
+std::vector<paddle::DataType> GroupQuantInferDtype(const paddle::DataType& input_dtype, const int group_size, const bool transpose_scale, const float quant_max_bound,const float quant_min_bound) {
     
     if(fabs(quant_max_bound - 448.0f) < 0.000001){
         return {paddle::DataType::FLOAT8_E4M3FN, paddle::DataType::FLOAT32};
@@ -174,6 +218,7 @@ PD_BUILD_OP(group_quant)
     .Inputs({"x"})
     .Outputs({"output", "scale"})
     .Attrs({"group_size: int",
+            "transpose_scale: bool",
             "quant_max_bound: float",
             "quant_min_bound: float"})
     .SetKernelFn(PD_KERNEL(GroupQuant))

@@ -3986,8 +3986,9 @@ class FusedBlockMultiTransformerFP8ScaleTensor(FusedBlockMultiTransformer):
         if self.weight_block_size[0] == 0 and self.weight_block_size[1] == 0:
             x_q, x_s = self.per_tensor_quant_fp8(x)
         else:
-            x_q, x_s = group_quant(x, group_size=128, quant_max_bound=448.0, quant_min_bound=-448.0)
-            x_s = x_s.transpose([1, 0])
+            x_q, x_s = group_quant(
+                x, group_size=128, transpose_scale=True, quant_max_bound=448.0, quant_min_bound=-448.0
+            )
         return x_q, x_s
 
     def cutlass_fp8_gemm(
