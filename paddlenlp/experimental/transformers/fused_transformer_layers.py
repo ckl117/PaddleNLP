@@ -2721,7 +2721,6 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
         )
 
         query, query_nope, query_pe, compressed_kv, key_pe = qkv_out
-        # assert caches[2 * i] is not None and caches[2 * i + 1] is None
         latent_cache = caches[i]
 
         fmha_out = paddle.zeros(
@@ -3114,8 +3113,6 @@ class FusedBlockMultiTransformerWeightOnly(FusedBlockMultiTransformer, FusedMult
         )
 
         query, query_nope, query_pe, compressed_kv, key_pe = qkv_out
-        # assert caches[2 * i] is not None and caches[2 * i + 1] is None
-
         latent_cache = caches[i]
 
         fmha_out = paddle.zeros(
