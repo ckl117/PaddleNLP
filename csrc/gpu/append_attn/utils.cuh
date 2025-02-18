@@ -283,8 +283,13 @@ __forceinline__ __host__ __device__ void vec_cast<nv_bfloat16, float>(
       __VA_ARGS__                                  \
       break;                                       \
     }                                              \
-    case 256: {                                    \
-      constexpr size_t HEAD_DIM = 256;             \
+    case 512: {                                    \
+      constexpr size_t HEAD_DIM = 512;             \
+      __VA_ARGS__                                  \
+      break;                                       \
+    }                                              \
+    case 576: {                                    \
+      constexpr size_t HEAD_DIM = 576;             \
       __VA_ARGS__                                  \
       break;                                       \
     }                                              \
@@ -315,7 +320,10 @@ __forceinline__ __host__ __device__ void vec_cast<nv_bfloat16, float>(
   }
 
 #define DISPATCH_DEAL_EACH_TIME(deal_each_time, DEAL_EACH_TIME, ...) \
-  if (deal_each_time == 32) {                                        \
+  if (deal_each_time == 16) {                                        \
+    constexpr size_t DEAL_EACH_TIME = 16;                            \
+    __VA_ARGS__                                                      \
+  } else if (deal_each_time == 32) {                                 \
     constexpr size_t DEAL_EACH_TIME = 32;                            \
     __VA_ARGS__                                                      \
   } else if (deal_each_time == 64) {                                 \
@@ -357,8 +365,8 @@ __forceinline__ __host__ __device__ void vec_cast<nv_bfloat16, float>(
   } else if (group_size == 8) {                              \
     constexpr size_t GROUP_SIZE = 8;                         \
     __VA_ARGS__                                              \
-  } else if (group_size == 12) {                             \
-    constexpr size_t GROUP_SIZE = 12;                        \
+  } else if (group_size == 16) {                             \
+    constexpr size_t GROUP_SIZE = 16;                        \
     __VA_ARGS__                                              \
   }
 

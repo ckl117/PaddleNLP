@@ -227,6 +227,8 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                 self.quant_type == "weight_only_int8" or self.quant_type == "weight_only_int4"
             ), f"Expected quant_type equal to 'weight_only_int8' or 'weight_only_int4', but received {self.quant_type}"
 
+        assert config.append_attn is True
+
         self.first_k_dense_replace = config.first_k_dense_replace
         self.n_routed_experts = config.n_routed_experts
 
@@ -335,6 +337,15 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             )
             for idx in range(self.num_layers)
         ]
+        kv_b_proj_weight_original_attrs = None
+        if self.use_weight_only:
+            kv_b_proj_weight_original_attrs = [
+                paddle.ParamAttr(
+                    name=f"fuse{self.base_model_prefix}.{idx}.kv_b_proj_weight_original",
+                    initializer=paddle.nn.initializer.Constant(value=0),
+                )
+                for idx in range(self.num_layers)
+            ]
 
         out_proj_weight_attrs = [
             paddle.ParamAttr(
@@ -463,7 +474,32 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                 for idx in range(self.num_layers)
             ]
 
+        self.prefill_cache_k_buffer: paddle.Tensor = None
+        self.prefill_cache_v_buffer: paddle.Tensor = None
+        if self.config.mla_use_matrix_absorption:
+            max_batch_size = 32
+            max_block_nums = max_batch_size * (self.max_seq_len + config.block_size - 1) // config.block_size
+            cache_k_shape = [
+                max_block_nums,
+                config.num_key_value_heads // max(config.tensor_parallel_degree, 1),
+                config.block_size,
+                config.qk_nope_head_dim + config.qk_rope_head_dim,
+            ]
+            cache_v_shape = [
+                max_block_nums,
+                config.num_key_value_heads // max(config.tensor_parallel_degree, 1),
+                config.block_size,
+                config.v_head_dim,
+            ]
+            self.prefill_cache_k_buffer = paddle.empty(shape=cache_k_shape, dtype=paddle.get_default_dtype())
+            self.prefill_cache_v_buffer = paddle.empty(shape=cache_v_shape, dtype=paddle.get_default_dtype())
+            self.register_buffer("prefill_cache_k_buffer", self.prefill_cache_k_buffer, persistable=False)
+            self.register_buffer("prefill_cache_v_buffer", self.prefill_cache_v_buffer, persistable=False)
+
         mla_config = MLAConfig(
+            use_matrix_absorption=self.config.mla_use_matrix_absorption,
+            prefill_cache_k_buffer=self.prefill_cache_k_buffer,
+            prefill_cache_v_buffer=self.prefill_cache_v_buffer,
             q_lora_rank=self.config.q_lora_rank,
             kv_lora_rank=self.config.kv_lora_rank,
             qk_nope_head_dim=self.config.qk_nope_head_dim,
@@ -481,6 +517,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             kv_a_proj_with_mqa_weight_scale_attrs=kv_a_proj_with_mqa_weight_scale_attrs,
             kv_a_layernorm_weight_attrs=kv_a_layernorm_weight_attrs,
             kv_b_proj_weight_attrs=kv_b_proj_weight_attrs,
+            kv_b_proj_weight_original_attrs=kv_b_proj_weight_original_attrs,
             kv_b_proj_weight_scale_attrs=kv_b_proj_weight_scale_attrs,
         )
 
@@ -536,7 +573,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
             rank_id=config.tensor_parallel_rank,
             moe_config=moe_config,
             mla_config=mla_config,
-            append_attn=config.append_attn,
+            append_attn=True,
             speculate_config=speculate_config,
         )
 
@@ -698,6 +735,7 @@ class DeepseekV2BlockInferenceModel(DeepseekV2PretrainedModel):
                     kv_b_proj_weight, algo=self.quant_algo
                 )
                 self.transformer_block.kv_b_proj_weights[idx].set_value(kv_b_proj_quanted_weight)
+                self.transformer_block.kv_b_proj_weights_original[idx].set_value(kv_b_proj_weight)
                 self.transformer_block.kv_a_layernorm_weights[idx].set_value(kv_a_layernorm_weight)
                 self.transformer_block.kv_b_proj_weights_scale[idx].set_value(kv_b_proj_weight_scale)
             elif "fp8" in self.quant_type:
@@ -1255,7 +1293,7 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
             max_length (int | None, optional): the max_length of cache_kvs. Defaults to None.
 
         Returns:
-            list[paddle.Tensor]: the list tensor shape for cache
+            list[list[int]]: the list tensor shape for cache
         """
         max_block_per_seq = (config.max_seq_len + config.block_size - 1) // config.block_size
         if max_batch_size == -1:
@@ -1263,23 +1301,35 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
         else:
             max_block_nums = max_batch_size * max_block_per_seq
 
-        cache_kvs = []
-        for _ in range(config.num_hidden_layers):
-            cache_k_shape = [
-                max_block_nums,
-                config.num_key_value_heads // max(config.tensor_parallel_degree, 1),
-                config.block_size,
-                config.qk_nope_head_dim + config.qk_rope_head_dim,
-            ]
-            cache_v_shape = [
-                max_block_nums,
-                config.num_key_value_heads // max(config.tensor_parallel_degree, 1),
-                config.block_size,
-                config.v_head_dim,
-            ]
-            cache_kvs.append(cache_k_shape)
-            cache_kvs.append(cache_v_shape)
-        return cache_kvs
+        cache_k_shapes = []
+        cache_v_shapes = []
+        if config.mla_use_matrix_absorption:
+            for _ in range(config.num_hidden_layers):
+                cache_latent_shape = [
+                    max_block_nums,
+                    1,
+                    config.block_size,
+                    config.kv_lora_rank + config.qk_rope_head_dim,
+                ]
+                cache_k_shapes.append(cache_latent_shape)
+            return cache_k_shapes, None
+        else:
+            for _ in range(config.num_hidden_layers):
+                cache_k_shape = [
+                    max_block_nums,
+                    config.num_key_value_heads // max(config.tensor_parallel_degree, 1),
+                    config.block_size,
+                    config.qk_nope_head_dim + config.qk_rope_head_dim,
+                ]
+                cache_v_shape = [
+                    max_block_nums,
+                    config.num_key_value_heads // max(config.tensor_parallel_degree, 1),
+                    config.block_size,
+                    config.v_head_dim,
+                ]
+                cache_k_shapes.append(cache_k_shape)
+                cache_v_shapes.append(cache_v_shape)
+            return cache_k_shapes, cache_v_shapes
 
     def prepare_inputs_for_generation(self, **kwargs):
         # only last token for inputs_ids if cache is defined in kwargs
