@@ -1390,6 +1390,114 @@ class DeepseekV2ForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, De
             )
         self.deepseek_v2.set_state_dict({k: state_dict[k] for k in state_dict.keys()})
 
+    @paddle.no_grad()
+    def zkk_set_state_dict(self, state_dict):
+        def pop(name):
+            assert name in state_dict.keys()
+            state_dict.pop(name)
+
+        name = "lm_head.weight"
+        self.lm_head.weight.set_value(state_dict[name].cast(self.lm_head.weight.dtype))
+        pop(name)
+
+        name = "deepseek_v2.embed_tokens.weight"
+        self.deepseek_v2.embed_tokens.weight.set_value(
+            state_dict[name].cast(self.deepseek_v2.embed_tokens.weight.dtype)
+        )
+        pop(name)
+
+        name = "deepseek_v2.norm.weight"
+        self.deepseek_v2.norm.weight.set_value(state_dict[name].cast(self.deepseek_v2.norm.weight.dtype))
+        pop(name)
+
+        for idx in range(61):
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.ln_scale"
+            self.deepseek_v2.transformer_block.ln_scales[idx].set_value(
+                state_dict[name].cast(self.deepseek_v2.transformer_block.ln_scales[idx].dtype)
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.ffn_ln_scale"
+            self.deepseek_v2.transformer_block.ffn_ln_scales[idx].set_value(
+                state_dict[name].cast(self.deepseek_v2.transformer_block.ffn_ln_scales[idx].dtype)
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.q_a_proj_weight"
+            self.deepseek_v2.transformer_block.q_a_proj_weights[idx].copy_(
+                state_dict[name].view("float8_e4m3fn"), False
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.q_a_layernorm_weight"
+            self.deepseek_v2.transformer_block.q_a_layernorm_weights[idx].set_value(
+                state_dict[name].cast(self.deepseek_v2.transformer_block.q_a_layernorm_weights[idx].dtype)
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.q_b_proj_weight"
+            self.deepseek_v2.transformer_block.q_b_proj_weights[idx].copy_(
+                state_dict[name].view("float8_e4m3fn"), False
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.kv_a_proj_with_mqa_weight"
+            self.deepseek_v2.transformer_block.kv_a_proj_with_mqa_weights[idx].copy_(
+                state_dict[name].view("float8_e4m3fn"), False
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.kv_a_layernorm_weight"
+            self.deepseek_v2.transformer_block.kv_a_layernorm_weights[idx].set_value(
+                state_dict[name].cast(self.deepseek_v2.transformer_block.kv_a_layernorm_weights[idx].dtype)
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.kv_b_proj_weight"
+            self.deepseek_v2.transformer_block.kv_b_proj_weights[idx].copy_(
+                state_dict[name].view("float8_e4m3fn"), False
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.out_proj_weight"
+            self.deepseek_v2.transformer_block.linear_weights[idx].copy_(state_dict[name].view("float8_e4m3fn"), False)
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.ffn1_weight"
+            self.deepseek_v2.transformer_block.ffn1_weights[idx].copy_(state_dict[name].view("float8_e4m3fn"), False)
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.ffn2_weight"
+            self.deepseek_v2.transformer_block.ffn2_weights[idx].copy_(state_dict[name].view("float8_e4m3fn"), False)
+            pop(name)
+
+        for idx in range(3, 61):
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.shared_expert_ffn2_weight"
+            self.deepseek_v2.transformer_block.shared_expert_ffn2_weights[idx].copy_(
+                state_dict[name].view("float8_e4m3fn"), False
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.shared_expert_ffn1_weight"
+            self.deepseek_v2.transformer_block.shared_expert_ffn1_weights[idx].copy_(
+                state_dict[name].view("float8_e4m3fn"), False
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.e_score_correction_bias"
+            self.deepseek_v2.transformer_block.e_score_correction_biases[idx].set_value(
+                state_dict[name].cast(self.deepseek_v2.transformer_block.e_score_correction_biases[idx].dtype)
+            )
+            pop(name)
+
+            name = f"deepseek_v2.transformer_block.fusedeepseek_v3.{idx}.gate_weight"
+            self.deepseek_v2.transformer_block.gate_weights[idx].set_value(
+                state_dict.pop(name).cast(self.deepseek_v2.transformer_block.gate_weights[idx].dtype)
+            )
+            # pop(name)
+
+        # print(state_dict.keys())
+
 
 class MTPDeepseekV2ForCausalLMBlockInferenceModel(DeepseekV2ForCausalLMBlockInferenceModel):
     def __init__(self, config, base_model_prefix):

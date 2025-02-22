@@ -13,20 +13,16 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import paddle
 
-from paddlenlp.transformers.model_utils import (
+from paddlenlp.transformers.model_utils import (  # load_tp_checkpoint,
     dtype_guard,
-    load_tp_checkpoint,
     no_init_weights,
 )
-from paddlenlp.transformers.utils import (
+from paddlenlp.transformers.utils import (  # is_safetensors_available,
     ContextManagers,
     is_paddle_support_lazy_init,
-    is_safetensors_available,
 )
 
 
@@ -35,15 +31,15 @@ def infererence_model_from_pretrained(cls, pretrained_model_name_or_path, args, 
     Instantiate a pretrained model configuration from a pre-trained model name or path.
     """
     config = kwargs.pop("config", None)
-    cache_dir = kwargs.pop("cache_dir", None)
+    # cache_dir = kwargs.pop("cache_dir", None)
     dtype = kwargs.pop("dtype", None)
     if dtype is None:
         dtype = config.dtype
     subfolder = kwargs.pop("subfolder", None)
     if subfolder is None:
         subfolder = ""
-    variant = kwargs.pop("variant", None)
-    use_safetensors = kwargs.pop("use_safetensors", None if is_safetensors_available() else False)
+    # variant = kwargs.pop("variant", None)
+    # use_safetensors = kwargs.pop("use_safetensors", None if is_safetensors_available() else False)
     low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", False)
 
     init_contexts = []
@@ -59,21 +55,47 @@ def infererence_model_from_pretrained(cls, pretrained_model_name_or_path, args, 
     with ContextManagers(init_contexts):
         model = cls(config)
 
-    resolved_archive_file, _, _, _ = cls._resolve_model_file_path(
-        pretrained_model_name_or_path,
-        cache_dir=cache_dir,
-        subfolder=subfolder,
-        from_hf_hub=False,
-        from_aistudio=False,
-        config=config,
-        convert_from_torch=False,
-        use_safetensors=use_safetensors,
-        variant=variant,
-    )
+    # resolved_archive_file, _, _, _ = cls._resolve_model_file_path(
+    #     pretrained_model_name_or_path,
+    #     cache_dir=cache_dir,
+    #     subfolder=subfolder,
+    #     from_hf_hub=False,
+    #     from_aistudio=False,
+    #     config=config,
+    #     convert_from_torch=False,
+    #     use_safetensors=use_safetensors,
+    #     variant=variant,
+    # )
 
-    model_path = os.path.dirname(resolved_archive_file)
-    state_dict = load_tp_checkpoint(model_path, cls, config, return_numpy=return_numpy)
-    model.set_state_dict(state_dict)
+    # model_path = os.path.dirname(resolved_archive_file)
+    # state_dict = load_tp_checkpoint(model_path, cls, config, return_numpy=return_numpy)
+    # model.set_state_dict(state_dict)
+
+    model.deepseek_v2.transformer_block.init_weight()
+
+    for key, value in model.state_dict().items():
+        if "cache" in key:
+            continue
+        value._clear_data()
+
+    paddle.distributed.barrier()
+    rank = paddle.distributed.get_rank()
+    file_name = f"/root/paddlejob/workspace/env_run/output/deepseekv3/{rank}.pdparams"
+    # state_dict = model.state_dict()
+    # paddle.save(state_dict, file_name)
+    # exit(0)
+
+    state_dict = paddle.load(file_name, return_numpy=False)
+    model.zkk_set_state_dict(state_dict)
+
+    for key, value in model.state_dict().items():
+        if "fp8_scale_ten" in key:
+            value._clear_data()
+            new_v = paddle.assign(state_dict[key])
+            new_v._share_buffer_to(value)
+
+    # file_name = f"/root/paddlejob/workspace/env_run/output/deepseekv31/{rank}.pdparams"
+    # paddle.save(model.state_dict(), file_name)
 
     return model
 

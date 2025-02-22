@@ -1493,8 +1493,11 @@ def predict():
                     target_texts.append("")
 
     else:
+        # source_texts = [
+        #     "2014年3月，大范围雾霾天气长时间影响我国东部地区，严重危害人体健康。造成雾霾天气的人为原因有____\r\n①工业生产中使用矿物作为燃料，大量排放污染物     ②汽车尾气的大量排放     \r\n③风力小，空气流动不畅     ④冬季取暖排放粉尘\nA. ①②③\nB. ②③④\nC. ①③④\nD. ①②④"
+        # ] * predictor_args.batch_size
         source_texts = [
-            "2014年3月，大范围雾霾天气长时间影响我国东部地区，严重危害人体健康。造成雾霾天气的人为原因有____\r\n①工业生产中使用矿物作为燃料，大量排放污染物     ②汽车尾气的大量排放     \r\n③风力小，空气流动不畅     ④冬季取暖排放粉尘\nA. ①②③\nB. ②③④\nC. ①③④\nD. ①②④"
+            "[Round 1]\n\n问：一个质量为2kg的物体同时受到两个力的作用，这两个力的大小分别为2N和6N，当两个力的方向发生变化时，物体的加速度大小不可能为____\nA. $1m/s^{2}$\nB. $2m/s^{2}$\nC. $3m/s^{2}$\nD. $4m/s^{2}$\n\n答："
         ] * predictor_args.batch_size
         target_texts = [""] * predictor_args.batch_size
 
@@ -1561,4 +1564,18 @@ def benchmark(predictor, predictor_args, model_args):
 
 
 if __name__ == "__main__":
+    mp_id = paddle.distributed.get_rank()
+    os.environ["TRITON_KERNEL_CACHE_DIR"] = f"/tmpckl_/triton_kernel_cache{mp_id}"
+    # import shutil
+
+    # mp_id = paddle.distributed.get_rank()
+    # generated_dir = f"/root/paddlejob/workspace/env_run/output/model/deepseek_v3_fp8/rank_{mp_id}/model"
+    # so_paths = []
+    # for root, dirs, files in os.walk(generated_dir):
+    #     for file in files:
+    #         if file.endswith(".so"):
+    #             so_paths.append(os.path.join(root, file))
+    # for so_path in so_paths:
+    #     paddle.utils.cpp_extension.load_op_meta_info_and_register_op(so_path)
+
     predict()

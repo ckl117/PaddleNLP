@@ -50,7 +50,7 @@ numpy_dtype = {
     "U8": np.uint8,
     "I8": np.int8,
     "F8_E5M2": 1,  # no fp8
-    "F8_E4M3": 1,  # no fp8
+    "F8_E4M3": np.uint8,  # no fp8
     "I16": np.int16,
     "U16": np.uint16,
     "I32": np.int32,
@@ -58,7 +58,7 @@ numpy_dtype = {
     "I64": np.int64,
     "U64": np.uint64,
     "F16": np.float16,
-    "BF16": 2,  # no bf16
+    "BF16": np.uint16,  # no bf16
     "F32": np.float32,
     "F64": np.float64,
 }

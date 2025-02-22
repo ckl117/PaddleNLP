@@ -4280,6 +4280,7 @@ class FusedBlockMultiTransformerFP8ScaleTensor(FusedBlockMultiTransformer):
                 self.ffn1_weights[i],
                 self.ffn2_weights[i],
                 scores,
+                scores_no_bias,
                 self.config.moe_config.top_k,
                 renormalize=self.config.moe_config.norm_topk_prob,
                 use_fp8_w8a8=True,
@@ -4289,6 +4290,7 @@ class FusedBlockMultiTransformerFP8ScaleTensor(FusedBlockMultiTransformer):
                 if sum(self.weight_block_size) != 0
                 else None,  # default block-wise, per-tensor is None
                 refactor=self.config.moe_config.routed_scaling_factor,
+                e_score_correction_bias=self.e_score_correction_biases[i],
             )
         else:
             assert False, "Not implemented yet"

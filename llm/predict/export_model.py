@@ -61,6 +61,10 @@ def main():
     predictor = create_predictor(predictor_args, model_args)
     predictor.model.eval()
 
+    os.environ["TRITON_KERNEL_CACHE_DIR"] = llm_utils.get_infer_model_path(
+        export_args.output_path, predictor_args.model_prefix
+    )
+
     predictor.model.to_static(
         llm_utils.get_infer_model_path(export_args.output_path, predictor_args.model_prefix),
         {
@@ -89,4 +93,20 @@ def main():
 
 
 if __name__ == "__main__":
+
+    mp_id = paddle.distributed.get_rank()
+    os.environ["TRITON_KERNEL_CACHE_DIR"] = f"/tmp_ckl/triton_kernel_cache{mp_id}"
+
+    mp_id = paddle.distributed.get_rank()
+    generated_dir = (
+        f"/root/paddlejob/workspace/env_run/output/chenkailun/deepseek_serving/model/deepseek_v3_fp8/rank_{mp_id}/"
+    )
+    so_paths = []
+    for root, dirs, files in os.walk(generated_dir):
+        for file in files:
+            if file.endswith(".so"):
+                so_paths.append(os.path.join(root, file))
+    for so_path in so_paths:
+        paddle.utils.cpp_extension.load_op_meta_info_and_register_op(so_path)
+
     main()
