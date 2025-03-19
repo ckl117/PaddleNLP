@@ -15,10 +15,11 @@
 import os
 from abc import ABC, abstractmethod
 
-from paddlenlp.transformers import Llama3Tokenizer, LlamaTokenizer
-from paddlenlp.trl.llm_utils import get_eos_token_id
 from server.engine.config import global_config
 from server.utils import data_processor_logger
+
+from paddlenlp.transformers import Llama3Tokenizer, LlamaTokenizer
+from paddlenlp.trl.llm_utils import get_eos_token_id
 from paddlenlp.utils.env import USE_FAST_TOKENIZER
 
 
@@ -36,11 +37,15 @@ class BaseDataProcessor(ABC):
         self.tokenizer.sep_token_id = self.tokenizer._convert_token_to_id(self.tokenizer.sep_token)
         self.tokenizer.eos_token_id = self.tokenizer._convert_token_to_id(self.tokenizer.eos_token)
         self.tokenizer.mask_token_id = self.tokenizer._convert_token_to_id(self.tokenizer.mask_token)
-        data_processor_logger.info((f"tokenizer infomation: bos_token is {self.tokenizer.bos_token}, {self.tokenizer.bos_token_id}, ",
-                    f"cls_token is {self.tokenizer.cls_token}, {self.tokenizer.cls_token_id}, "
-					f"sep_token is {self.tokenizer.sep_token}, {self.tokenizer.sep_token_id}, "
-                    f"eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id}, "
-					f"mask_token is {self.tokenizer.mask_token}, {self.tokenizer.mask_token_id}"))
+        data_processor_logger.info(
+            (
+                f"tokenizer infomation: bos_token is {self.tokenizer.bos_token}, {self.tokenizer.bos_token_id}, ",
+                f"cls_token is {self.tokenizer.cls_token}, {self.tokenizer.cls_token_id}, "
+                f"sep_token is {self.tokenizer.sep_token}, {self.tokenizer.sep_token_id}, "
+                f"eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id}, "
+                f"mask_token is {self.tokenizer.mask_token}, {self.tokenizer.mask_token_id}",
+            )
+        )
 
     @abstractmethod
     def process_request(self, request, **kwargs):
@@ -100,7 +105,7 @@ class BaseDataProcessor(ABC):
 
         Args:
             token_ids (List[int]): token ids
-			task_id (str): task id
+                        task_id (str): task id
 
         Returns:
             List[str]: strings
@@ -121,11 +126,17 @@ class BaseDataProcessor(ABC):
 class DataProcessor(BaseDataProcessor):
     def __init__(self):
         self.config = global_config
-
+        self.src_length = self.config.seq_len_limit
+        SRC_LENGTH_CKL = os.environ.get("SRC_LENGTH_CKL")
+        if SRC_LENGTH_CKL is not None:
+            self.src_length = int(SRC_LENGTH_CKL)
+        data_processor_logger.info(f"self.src_length = {self.src_length}")
         self.decode_status = dict()
         self.tokenizer = self._load_tokenizer()
-        data_processor_logger.info(f"tokenizer infomation: bos_token is {self.tokenizer.bos_token}, {self.tokenizer.bos_token_id}, \
-                                eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} ")
+        data_processor_logger.info(
+            f"tokenizer infomation: bos_token is {self.tokenizer.bos_token}, {self.tokenizer.bos_token_id}, \
+                                eos_token is {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id} "
+        )
 
     def process_request(self, request, max_seq_len=None):
         """
@@ -142,11 +153,14 @@ class DataProcessor(BaseDataProcessor):
             request["eos_token_ids"] = []
         request["eos_token_ids"].extend(get_eos_token_id(self.tokenizer, self.config.generation_config))
 
-        if "stop_seqs" not in request or (isinstance(request["stop_seqs"], (list, tuple)) and len(request["stop_seqs"]) == 0):
+        if "stop_seqs" not in request or (
+            isinstance(request["stop_seqs"], (list, tuple)) and len(request["stop_seqs"]) == 0
+        ):
             self.update_stop_seq(request)
 
-        if "input_ids" not in request or \
-            (isinstance(request["input_ids"], (list, tuple)) and len(request["input_ids"]) == 0):
+        if "input_ids" not in request or (
+            isinstance(request["input_ids"], (list, tuple)) and len(request["input_ids"]) == 0
+        ):
             if "text" in request:
                 request["input_ids"] = self.text2ids(request["text"])
             elif "messages" in request:
@@ -157,7 +171,7 @@ class DataProcessor(BaseDataProcessor):
                 raise ValueError(f"The request should have `input_ids`, `text` or `messages`: {request}.")
 
         if max_seq_len is not None and len(request["input_ids"]) > max_seq_len:
-            request["input_ids"] = request["input_ids"][:max_seq_len-1]
+            request["input_ids"] = request["input_ids"][: max_seq_len - 1]
         data_processor_logger.info(f"processed request: {request}")
         return request
 
@@ -180,7 +194,7 @@ class DataProcessor(BaseDataProcessor):
 
         token_ids = response_dict.get("token_ids", [])
         response_dict["token"] = self.ids2tokens(token_ids, response_dict["req_id"])
-        response_dict["usage"] = {"completion_tokens" : response_dict["send_idx"] + 1}
+        response_dict["usage"] = {"completion_tokens": response_dict["send_idx"] + 1}
 
         if is_end:
             response_dict["tokens_all"] = self.clear_request_status(req_id)
@@ -213,7 +227,7 @@ class DataProcessor(BaseDataProcessor):
                 return_tensors="np",
                 padding=True,
                 truncation=True,
-                max_length=self.config.seq_len_limit,
+                max_length=self.src_length,
                 add_special_tokens=self.tokenizer.chat_template is None,
             )
         return tokens["input_ids"][0]
@@ -237,7 +251,7 @@ class DataProcessor(BaseDataProcessor):
 
         Args:
             token_ids (List[int]): token ids
-			task_id (str): task id
+                        task_id (str): task id
 
         Returns:
             List[str]: strings
@@ -248,9 +262,9 @@ class DataProcessor(BaseDataProcessor):
                 self.decode_status[task_id] = [[], [], ""]
 
             previous_token_ids = self.decode_status[task_id][0]
-            decode_str = self.tokenizer.batch_decode([previous_token_ids + token_id],
-                                        skip_special_tokens=True,
-                                        clean_up_tokenization_spaces=False)
+            decode_str = self.tokenizer.batch_decode(
+                [previous_token_ids + token_id], skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )
             if isinstance(decode_str, list) and len(decode_str):
                 new_str = decode_str[0].replace(self.decode_status[task_id][2], "", 1)
                 self.decode_status[task_id][1].append(new_str)
@@ -268,7 +282,8 @@ class DataProcessor(BaseDataProcessor):
             read_offset = self.decode_status[task_id][1]
             previous_token_ids = self.decode_status[task_id][2]
             decode_str, prefix_offset, read_offset = self.tokenizer.decode_token(
-                previous_token_ids + token_id, prefix_offset, read_offset)
+                previous_token_ids + token_id, prefix_offset, read_offset
+            )
             self.decode_status[task_id][0] = prefix_offset
             self.decode_status[task_id][1] = read_offset
             self.decode_status[task_id][2] += token_id
@@ -284,10 +299,14 @@ class DataProcessor(BaseDataProcessor):
         """
         if self.config.use_hf_tokenizer:
             from transformers import AutoTokenizer
+
             return AutoTokenizer.from_pretrained(self.config.model_dir, use_fast=False)
         else:
             from paddlenlp.transformers import AutoTokenizer
-            return AutoTokenizer.from_pretrained(self.config.model_dir, padding_side="left", use_fast=USE_FAST_TOKENIZER)
+
+            return AutoTokenizer.from_pretrained(
+                self.config.model_dir, padding_side="left", use_fast=USE_FAST_TOKENIZER
+            )
 
     def clear_request_status(self, task_id):
         """
@@ -365,14 +384,11 @@ class DataProcessor(BaseDataProcessor):
         """
         Update stop sequences from request.
         """
-        stop_seqs =  []
+        stop_seqs = []
         for seq in request.get("stop_sequences", []):
             if seq != self.tokenizer.eos_token_id:
                 stop_seqs.append(self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(seq)))
         request["stop_seqs"], request["stop_seqs_len"] = self.pad_batch_data(
-            stop_seqs,
-            pad_id=-1,
-            return_seq_len=True,
-            return_array=False
+            stop_seqs, pad_id=-1, return_seq_len=True, return_array=False
         )
         data_processor_logger.debug(f"processed request: {request['stop_seqs'], request['stop_seqs_len']}")

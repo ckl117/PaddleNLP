@@ -1308,6 +1308,7 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
         if self.tensor_parallel_rank == 0:
             done_event.wait()
         s_time = time.time()
+        ii = 0
         while self.model_inputs["not_need_stop"]:
             # whether speculative decoding
             if self.proposer is not None:
@@ -1317,10 +1318,15 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
                     seq_lens_this_time=self.model_inputs["seq_lens_this_time"],
                     base_model_full_hidden_states=self.full_hidden_states,
                 )
+            ii += 1
+            if ii == 10:
+                paddle.framework.core.nvprof_start()
             if self.return_full_hidden_states:
                 self.full_hidden_states = self.predictor.run(list(self.model_inputs.values()))[0]
             else:
                 self.predictor.run(list(self.model_inputs.values()))
+            if ii == 15:
+                paddle.framework.core.nvprof_stop()
         logger.info(f"running spend {time.time() - s_time}")
 
         if self.tensor_parallel_rank == 0:
@@ -1591,32 +1597,39 @@ def benchmark(predictor, predictor_args, model_args):
     print("***********Start Benchmark**********")
 
     warmup_time = 5
-    test_time = 20
+    test_time = 5
 
     print("***********Start Warmup**********")
     for _ in range(warmup_time):
         for bs, batch_source_text in enumerate(batch_benchmark_texts):
-            outputs = predictor.predict(batch_source_text)
+            predictor.predict(batch_source_text)
 
     print("***********Start Speed Test**********")
     start = time.perf_counter()
     output_tokens = 0
     for _ in range(test_time):
+        profile_flag = _ == 4
+        if profile_flag:
+            paddle.framework.core.nvprof_start()
         for bs, batch_source_text in enumerate(batch_benchmark_texts):
-            outputs, batch_tokens = predictor.predict(batch_source_text, return_tokens=True)
-            output_tokens += sum([len(tokens) for tokens in batch_tokens])
+            results = predictor.predict(batch_source_text, return_tokens=True)
+            if predictor.tensor_parallel_rank == 0:
+                output_tokens += sum([len(tokens) for tokens in results[-1]])
+        if profile_flag:
+            paddle.framework.core.nvprof_stop()
     end = time.perf_counter()
-    print("Avg Elapse time is: ", (end - start) / test_time)
-    print("Output tokens is: ", output_tokens)
-    print(
-        "Input length is: {}, Output length is: {}, bs is: {}, IPS: {:.3f} tokens/s, QPS: {:.3f} requests/s. ".format(
-            predictor_args.src_length,
-            predictor_args.max_length,
-            predictor_args.batch_size,
-            (output_tokens / (end - start)),
-            (predictor_args.batch_size * test_time / (end - start)),
+    if predictor.tensor_parallel_rank == 0:
+        print("Avg Elapse time is: ", (end - start) / test_time)
+        print("Output tokens is: ", output_tokens)
+        print(
+            "Input length is: {}, Output length is: {}, bs is: {}, IPS: {:.3f} tokens/s, QPS: {:.3f} requests/s. ".format(
+                predictor_args.src_length,
+                predictor_args.max_length,
+                predictor_args.batch_size,
+                (output_tokens / (end - start)),
+                (predictor_args.batch_size * test_time / (end - start)),
+            )
         )
-    )
 
 
 if __name__ == "__main__":
