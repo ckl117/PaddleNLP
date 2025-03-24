@@ -1307,6 +1307,9 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
         if self.tensor_parallel_rank == 0:
             done_event.wait()
         s_time = time.time()
+        ii = 0
+        from paddle.framework import core
+
         while self.model_inputs["not_need_stop"]:
             # whether speculative decoding
             if self.proposer is not None:
@@ -1316,10 +1319,15 @@ class StaticGraphBlockInferencePredictor(BlockInferencePredictorMixin):
                     seq_lens_this_time=self.model_inputs["seq_lens_this_time"],
                     base_model_full_hidden_states=self.full_hidden_states,
                 )
+            ii += 1
+            if ii == 1:
+                core.nvprof_start()
             if self.return_full_hidden_states:
                 self.full_hidden_states = self.predictor.run(list(self.model_inputs.values()))[0]
             else:
                 self.predictor.run(list(self.model_inputs.values()))
+            if ii == 5:
+                core.nvprof_stop()
         logger.info(f"running spend {time.time() - s_time}")
 
         if self.tensor_parallel_rank == 0:
