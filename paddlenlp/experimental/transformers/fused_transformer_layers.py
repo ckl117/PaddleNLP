@@ -4511,21 +4511,21 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
                 v_b_o_proj_weight_scale_attr = self.get_attr(self.config.mla_config.v_b_o_proj_weight_scale_attrs, i)
                 if q_nope_k_b_proj_weight_scale_attr:
                     q_nope_k_b_proj_weight_scale = self.create_parameter(
-                        shape=self.get_scale_shape(self.q_nope_k_b_proj_weight_shape),
+                        shape=self.get_scale_shape(self.q_nope_k_b_proj_weight_shape, ffn1=False, moe=True),
                         attr=q_nope_k_b_proj_weight_scale_attr,
                         dtype="float32",
                         is_bias=False,
                     )
                 if q_rope_proj_weight_scale_attr:
                     q_rope_proj_weight_scale = self.create_parameter(
-                        shape=self.get_scale_shape(self.q_rope_proj_weight_shape),
+                        shape=self.get_scale_shape(self.q_rope_proj_weight_shape, ffn1=False, moe=True),
                         attr=q_rope_proj_weight_scale_attr,
                         dtype="float32",
                         is_bias=False,
                     )
                 if v_b_o_proj_weight_scale_attr:
                     v_b_o_proj_weight_scale = self.create_parameter(
-                        shape=self.get_scale_shape(self.v_b_o_proj_weight_shape),
+                        shape=self.get_scale_shape(self.v_b_o_proj_weight_shape, ffn1=False, moe=True),
                         attr=v_b_o_proj_weight_scale_attr,
                         dtype="float32",
                         is_bias=False,
@@ -4547,7 +4547,7 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
                     )
                 else:
                     ffn1_weight_scale = self.create_parameter(
-                        shape=self.get_scale_shape(self.moe_ffn1_weight_shape, ffn1=True),
+                        shape=self.get_scale_shape(self.moe_ffn1_weight_shape, ffn1=True, moe=True),
                         attr=ffn1_weight_scale_attr,
                         dtype="float32",
                         is_bias=False,
@@ -4570,7 +4570,7 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
                     )
                 else:
                     ffn2_weight_scale = self.create_parameter(
-                        shape=self.get_scale_shape(self.moe_ffn2_weight_shape, ffn1=True),
+                        shape=self.get_scale_shape(self.moe_ffn2_weight_shape, ffn1=False, moe=True),
                         attr=ffn2_weight_scale_attr,
                         dtype="float32",
                         is_bias=False,
@@ -4642,14 +4642,23 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
             self._add_parameter(shared_expert_ffn1_weight_scale)
             self._add_parameter(shared_expert_ffn2_weight_scale)
 
-    def get_scale_shape(self, weight_shape: list, ffn1=False):
+    def get_scale_shape(self, weight_shape: list, ffn1=False, moe=False):
         n, k = weight_shape[-2:]
-        block_k, block_n = self.weight_block_size
+        block_n, block_k = self.weight_block_size[0], self.weight_block_size[1]
         scale_shape = [i for i in weight_shape]
-        scale_shape[-2] = (n + block_n - 1) // block_n if block_n != 0 else 1
-        if ffn1 and (block_k + block_n) == 0:
-            scale_shape[-2] *= 2
-        scale_shape[-1] = (k + block_k - 1) // block_k if block_k != 0 else 1
+        if moe:
+            if ffn1:
+                scale_shape[-2] = 2 * ((n // 2 + 127) // 128)
+            else:
+                scale_shape[-2] = (n + 127) // 128
+            scale_shape[-1] = (k + 127) // 128
+            return scale_shape
+
+        if block_n == 0 and block_k == 0:
+            if ffn1:
+                return [2]
+            else:
+                return [1]
         return scale_shape
 
     def init_weight_shape(self, config):
@@ -5057,11 +5066,9 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
         return "float8_e4m3fn"
 
     def per_tensor_quant_fp8(self, x):
-        x_fp32 = x.cast("float32")
-        x_s = x_fp32.abs().max().clip(min=0.000001) / 448.0
-        x_q = x_fp32 / x_s
-        x_q = x_q.clip(min=-448.0, max=448.0)
-        return x_q.cast("float8_e4m3fn"), x_s
+        from paddlenlp_ops import dynamic_per_tensor_quant_fp8
+
+        return dynamic_per_tensor_quant_fp8(x)
 
     def dynamic_quant(self, x):
         if self.weight_block_size[0] == 0 and self.weight_block_size[1] == 0:
@@ -5086,47 +5093,37 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
         act="identity",
         ffn1=False,
     ):
+        if x_s is None:
+            x, x_s = self.dynamic_quant(x)
         if self.weight_block_size[0] == 0 and self.weight_block_size[1] == 0:
-            if x_s is None:
-                x_q, x_s = self.dynamic_quant(x)
-            else:
-                x_q = x
-            try:
-                from paddlenlp_ops import (
-                    cutlass_fp8_fp8_half_gemm_ptr_scale_fused as fp8_gemm_fused_ptr_scale,
-                )
-            except:
-                assert False, "fp8_gemm_fused_ptr_scale only supported on sm90"
             if ffn1:
-                n, k = y.shape
-                y_0 = y[: n // 2, :]
-                y_1 = y[n // 2 :, :]
-                y_s_0 = y_s[0, 0]
-                y_s_1 = y_s[1, 0]
-                out_0 = fp8_gemm_fused_ptr_scale(
-                    x=x_q,
-                    y=y_0,
-                    x_scale=x_s,
-                    y_scale=y_s_0,
-                    bias=bias,
+                from paddlenlp_ops import (
+                    cutlass_fp8_fp8_fp8_dual_gemm_fused_scale_ptr as fp8_dual_gemm_fused_ptr_scale,
+                )
+
+                out = fp8_dual_gemm_fused_ptr_scale(
+                    x,
+                    y,
+                    x_s,
+                    y_s,
                     transpose_x=False,
                     transpose_y=True,
-                    output_dtype=output_dtype,
+                    bias0=None,
+                    bias1=None,
+                    scale0=1.0,
+                    scale1=1.0,
+                    scale_out=1.0,
+                    act="swiglu",
                 )
-                out_1 = fp8_gemm_fused_ptr_scale(
-                    x=x_q,
-                    y=y_1,
-                    x_scale=x_s,
-                    y_scale=y_s_1,
-                    bias=bias,
-                    transpose_x=False,
-                    transpose_y=True,
-                    output_dtype=output_dtype,
-                )
-                out = paddle.concat([out_0, out_1], axis=-1)
             else:
+                try:
+                    from paddlenlp_ops import (
+                        cutlass_fp8_fp8_half_gemm_ptr_scale_fused as fp8_gemm_fused_ptr_scale,
+                    )
+                except:
+                    assert False, "fp8_gemm_fused_ptr_scale only supported on sm90"
                 out = fp8_gemm_fused_ptr_scale(
-                    x=x_q,
+                    x=x,
                     y=y,
                     x_scale=x_s,
                     y_scale=y_s,
@@ -5136,8 +5133,6 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
                     output_dtype=output_dtype,
                 )
         else:
-            if x_s is None:
-                x, x_s = self.dynamic_quant(x)
             try:
                 from paddlenlp_ops import (
                     cutlass_fp8_fp8_half_block_gemm_fused as fp8_block_gemm_fused,
@@ -5532,6 +5527,9 @@ class FusedBlockMultiTransformerFP8DynamicQuant(FusedBlockMultiTransformer):
             ffn1=True,
         )
         return out
+
+    def compute_activation(self, ffn1_out, i):
+        return ffn1_out
 
     def compute_ffn2(self, ffn1_out, i):
         out = self.cutlass_fp8_gemm(
