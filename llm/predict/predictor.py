@@ -1311,7 +1311,7 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
         self.model_inputs["stop_flags"][pos] = False
         self.model_inputs["result_id"][pos][0] = task_id
         self.model_inputs["step_idx"][pos, 0] = 1
-        self.model_inputs["pre_ids"][pos][0] = self.input_ids[query_id][-1]
+        self.model_inputs["pre_ids"][pos][0:1] = np.array(self.input_ids[query_id][-1])
         self.model_inputs["pre_ids"][pos][1:] = -1
         self.model_inputs["not_need_stop"][0] = True
 
@@ -1575,6 +1575,255 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
                     )
                 else:
                     outputs = None
+        logger.debug(f"running spend {time.time() - s_time}")
+        self.cache_kvs = None
+        self.model_inputs["cache_kvs"] = None
+        paddle.device.cuda.empty_cache()
+
+        if flag_current_rank_run:
+            if return_tokens:
+                return outputs, output_tokens
+            else:
+                return outputs
+
+    @paddle.no_grad()
+    @auto_dynamic_graph_pybind
+    def predict_dy_batch(
+        self,
+        input_texts: list[str] = None,
+        input_ids: list = None,
+        return_tokens=False,
+        all_rank_return=True,
+        detokenize=True,
+        repeat_num=1,
+        **kwargs
+    ):
+        assert repeat_num == 1, f"dynamic batch only support repeat_num=1, but got {repeat_num}."
+        flag_current_rank_run = self.tensor_parallel_rank == 0 or all_rank_return
+        self.input_ids = []
+        if input_ids is not None:
+            assert isinstance(input_ids, list) and isinstance(input_ids[0], list), "input_ids must be a list of list"
+            self.input_ids = copy.deepcopy(input_ids)
+            current_src_length = kwargs.get("src_length", self.config.src_length)
+            for i, inst in enumerate(self.input_ids):
+                if len(inst) > current_src_length:
+                    logger.warning(
+                        f"The input_id[{i}] will be truncated due to its length({len(inst)}) exceeding the src_length({current_src_length})!"
+                    )
+                    self.input_ids[i] = inst[:current_src_length]
+        else:
+            assert input_texts is not None, "input_texts can't be None, when input_ids is None."
+            if self.tokenizer.chat_template is not None:
+                if not isinstance(input_texts, list) or not isinstance(input_texts[0], str):
+                    input_texts = [input_texts]
+                input_texts = [
+                    self.tokenizer.apply_chat_template(sentence, tokenize=False) for sentence in input_texts
+                ]
+
+            for text in input_texts:
+                tokens = self.tokenizer(
+                    text,
+                    return_tensors="np",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.config.src_length,
+                    # if use chat_template, it will not add special_tokens
+                    add_special_tokens=self.tokenizer.chat_template is None
+                    or isinstance(self.tokenizer, (ChatGLMv2Tokenizer, ChatGLMTokenizer)),
+                )
+                self.input_ids.append(tokens["input_ids"][0])
+
+        assert self.proposer is None, "dynamic insert don't support proposer."
+
+        total_request_num = len(self.input_ids)
+        decoder_bs = total_request_num * repeat_num
+        max_batch_size = self.config.batch_size
+        self.block_size = self.config.block_size
+        # one more for tail blocks
+        max_num_blocks_per_row = (self.config.total_max_length + self.block_size - 1) // self.block_size + 1
+
+        # 固定输入
+        # output buffers for all inputs
+        self.model_inputs["all_token_ids"] = paddle.full(
+            shape=[decoder_bs, self.config.max_length],
+            fill_value=self.tokenizer.pad_token_id,
+            dtype="int64",
+        )
+        # self.model_inputs["all_scores"] = paddle.full(
+        #     shape=[decoder_bs, self.config.max_length],
+        #     fill_value=-1,
+        #     dtype='float32',
+        # )
+
+        self.model_inputs["pre_ids"] = paddle.full(
+            shape=[max_batch_size, self.config.max_length], fill_value=-1, dtype="int64"
+        )
+        self.model_inputs["step_idx"] = paddle.full(shape=[max_batch_size, 1], fill_value=0, dtype="int64")
+        self.model_inputs["stop_flags"] = paddle.ones(shape=[max_batch_size, 1], dtype="bool")
+        self.model_inputs["stop_nums"] = paddle.full(shape=[1], fill_value=max_batch_size, dtype="int64")
+        self.model_inputs["not_need_stop"] = paddle.full(shape=[1], fill_value=True, dtype="bool").cpu()  # cpu
+
+        self.model_inputs["result_id"] = paddle.full(shape=[max_batch_size, repeat_num], fill_value=-1).astype("int32")
+
+        from schedule.config import CacheConfig, SchedulerConfig
+        from schedule.scheduler import Scheduler
+
+        scheduler_config = SchedulerConfig(
+            max_batch_size=max_batch_size, total_max_length=self.config.total_max_length
+        )
+        cache_config = CacheConfig(
+            dtype=paddle.bfloat16,
+            gpu_memory_utilization=0.8,
+            block_size=self.block_size,
+            cache_k_shapes=self.cache_k_shapes,
+            cache_v_shapes=self.cache_v_shapes,
+        )
+        scheduler = Scheduler(scheduler_config, cache_config)
+        max_num_blocks = scheduler.kv_cache_manager.max_num_blocks
+        print(f"max_num_blocks = {max_num_blocks}")
+
+        if self.cache_k_shapes is not None:
+            for i in range(len(self.cache_k_shapes)):
+                self.cache_k_shapes[i][0] = max_num_blocks
+        if self.cache_v_shapes is not None:
+            for i in range(len(self.cache_v_shapes)):
+                self.cache_v_shapes[i][0] = max_num_blocks
+
+        self.init_cache_kvs()
+        from schedule.request import Request
+
+        for query_id, input_id in enumerate(self.input_ids):
+            for i in range(repeat_num):
+                request = Request(
+                    request_id=query_id * repeat_num + i,
+                    query_id=query_id,
+                    prompt=None,
+                    prompt_token_ids=input_id,
+                    repeat_num=repeat_num,
+                    max_length=self.config.max_length,
+                    min_length=self.config.min_length,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    arrival_time=time.time(),
+                )
+                scheduler.add_request(request)
+
+        from schedule.output import ModelRunnerOutput, SchedulerOutput
+
+        def execute(scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
+
+            prefill_reqs = scheduler_output.scheduled_new_reqs
+            decoder_reqs = scheduler_output.scheduled_running_reqs
+            req_block_ids = scheduler_output.req_block_ids
+            assert len(prefill_reqs) + len(decoder_reqs) == len(
+                req_block_ids
+            ), f"len(prefill_reqs){len(prefill_reqs)} + len(decoder_reqs){len(decoder_reqs)} == len(req_block_ids){len(req_block_ids)}"
+            current_batch_size = len(req_block_ids)
+            # logger.info(f'current_batch_size = {current_batch_size}')
+
+            input_ids = paddle.full([current_batch_size, self.config.total_max_length], 0, dtype=paddle.int64)
+            seq_lens_this_time = paddle.full([current_batch_size, 1], 0, dtype=paddle.int32)
+            seq_lens_encoder = paddle.full([current_batch_size, 1], 0, dtype=paddle.int32)
+            seq_lens_decoder = paddle.full([current_batch_size, 1], 0, dtype=paddle.int32)
+            block_tables = paddle.full([current_batch_size, max_num_blocks_per_row], fill_value=-1, dtype=paddle.int32)
+            excess_blocks = paddle.full([current_batch_size, repeat_num], fill_value=-1, dtype=paddle.int32)
+            next_tokens = paddle.full(shape=[current_batch_size, 1], fill_value=-1, dtype="int64")
+
+            pre_ids_np = np.full([current_batch_size, self.config.max_length], fill_value=-1, dtype=np.int64)
+            result_id_np = np.full([current_batch_size, repeat_num], fill_value=-1, dtype=np.int64)
+
+            req_ids: list[int] = []
+            # req_id -> index
+            req_id_to_index: dict[int, int] = {}
+
+            for i, decoder_req in enumerate(decoder_reqs):
+                request_id = decoder_req.request_id
+                req_ids.append(request_id)
+                req_id_to_index[request_id] = i
+                input_id = [decoder_req.output_token_ids[-1]]
+                decoder_block_ids, _ = req_block_ids[request_id]
+                length = len(input_id)
+                input_ids[i, :length] = np.array(input_id)
+                seq_lens_this_time[i] = 1
+                seq_lens_encoder[i] = 0
+                seq_lens_decoder[i] = decoder_req.num_tokens + decoder_req.num_output_tokens - 1
+                block_tables[i][: len(decoder_block_ids)] = np.array(decoder_block_ids)
+
+                self.model_inputs["step_idx"][i] = decoder_req.num_output_tokens
+                self.model_inputs["stop_flags"][i] = False
+                pre_ids_list = [decoder_req.prompt_token_ids[-1]] + decoder_req.output_token_ids
+                pre_ids_np[i, : len(pre_ids_list)] = np.array(pre_ids_list)
+                result_id_np[i, 0] = request_id
+
+            for j, prefill_req in enumerate(prefill_reqs):
+                i = j + len(decoder_reqs)
+                request_id = prefill_req.request_id
+                query_id = prefill_req.query_id
+                req_ids.append(request_id)
+                req_id_to_index[request_id] = i
+                input_id = prefill_req.prompt_token_ids
+                prefill_block_ids, excess_block_ids = req_block_ids[request_id]
+                prefill_and_tail_block_ids = prefill_block_ids + [excess_block_ids[0]]
+                length = len(input_id)
+                input_ids[i, :length] = np.array(input_id)
+                seq_lens_this_time[i] = length
+                seq_lens_encoder[i] = length
+                seq_lens_decoder[i] = 0
+                block_tables[i][: len(prefill_and_tail_block_ids)] = np.array(prefill_and_tail_block_ids)
+
+                excess_blocks[i] = np.array(excess_block_ids)
+
+                self.model_inputs["step_idx"][i] = prefill_req.num_output_tokens
+                self.model_inputs["stop_flags"][i] = False
+                pre_ids_list = [prefill_req.prompt_token_ids[-1]]
+                pre_ids_np[i, : len(pre_ids_np)] = np.array(pre_ids_list)
+                result_id_np[i, :] = np.arange(
+                    query_id * repeat_num, query_id * repeat_num + repeat_num, dtype=np.int64
+                )
+
+            self.model_inputs["input_ids"] = input_ids
+            self.model_inputs["seq_lens_this_time"] = seq_lens_this_time
+            self.model_inputs["seq_lens_encoder"] = seq_lens_encoder
+            self.model_inputs["seq_lens_decoder"] = seq_lens_decoder
+            self.model_inputs["block_tables"] = block_tables
+            self.model_inputs["excess_blocks"] = excess_blocks
+            self.model_inputs["next_tokens"] = next_tokens
+
+            self.model_inputs["pre_ids"][:current_batch_size] = pre_ids_np
+            self.model_inputs["result_id"][:current_batch_size] = result_id_np
+
+            self.model_inputs["stop_nums"][:current_batch_size] = current_batch_size
+            self.model_inputs["not_need_stop"][0] = True
+
+            # run
+            next_tokens = self._infer(self.model_inputs).numpy().reshape([-1]).tolist()
+
+            stop_flags_this_step = self.model_inputs["stop_flags"].numpy().reshape([-1]).tolist()
+
+            return ModelRunnerOutput(
+                req_ids=req_ids,
+                req_id_to_index=req_id_to_index,
+                next_tokens=next_tokens,
+                stop_flags=stop_flags_this_step,
+            )
+
+        s_time = time.time()
+        while scheduler.has_unfinished_requests():
+            scheduler_output = scheduler.schedule()
+            output = execute(scheduler_output)
+            scheduler.update_from_output(scheduler_output, output)
+        if flag_current_rank_run:
+            output_tokens = [[] for i in range(len(scheduler.requests))]
+            for req_id, req in scheduler.requests.items():
+                output_token_id_np = np.array(req.output_token_ids)
+                output_token_id_np[output_token_id_np < 0] = self.tokenizer.pad_token_id
+                output_tokens[req_id] = output_token_id_np.tolist()
+            if detokenize:
+                outputs = self.tokenizer.batch_decode(
+                    output_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
+                )
+            else:
+                outputs = None
+
         logger.debug(f"running spend {time.time() - s_time}")
         self.cache_kvs = None
         self.model_inputs["cache_kvs"] = None
