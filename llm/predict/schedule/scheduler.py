@@ -147,7 +147,7 @@ class Scheduler:
             stop_flag = stop_flags[req_index]
             request.output_token_ids.append(next_token)
             if stop_flag:
-                self.kv_cache_manager.free(request)
+                self.kv_cache_manager.free(request, stop=True)
                 continue
             new_running.append(request)
         self.running = new_running

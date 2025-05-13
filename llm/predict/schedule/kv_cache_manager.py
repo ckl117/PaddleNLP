@@ -195,7 +195,7 @@ class KVCacheManager:
             return True
         return False
 
-    def free(self, request: Request) -> None:
+    def free(self, request: Request, stop=False) -> None:
         # decoder blocks
         blocks = self.request_decoder_block_cache.pop(request.request_id, [])
         self.free_block_deque.extend(blocks)
@@ -211,3 +211,5 @@ class KVCacheManager:
                 self.free_block_deque.extend(tail_blocks)
                 self.request_prefill_block_cache.pop(query_id, [])
                 self.request_prefill_block_cache_ref_cnt.pop(query_id, [])
+                if not stop:
+                    print(f"Free preempted_req:{query_id}, output_token_num={request.num_output_tokens}")

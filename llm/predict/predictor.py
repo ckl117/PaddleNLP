@@ -1228,12 +1228,12 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
 
     @paddle.no_grad()
     @auto_dynamic_graph_pybind
-    def predict(self, input_texts: list[str], return_tokens=False):
+    def predict(self, input_texts: list[str] = None, input_ids: list[list[int]] = None, return_tokens=False):
         if self.dynamic_insert:
             return self.predict_dy_insert(input_texts, return_tokens=return_tokens)
         if self.config.output_via_mq:
             return self.predict_via_mq(input_texts, return_tokens)
-        self._preprocess(input_texts)
+        self._preprocess(input_texts, input_ids)
 
         if self.proposer is not None:
             self.proposer.insert_query(
@@ -1267,7 +1267,7 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
             outputs = self.tokenizer.batch_decode(
                 output_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
             )
-            assert len(outputs) == len(input_texts)
+            assert len(outputs) == len(input_ids)
 
             if return_tokens:
                 return outputs, output_tokens
@@ -1569,6 +1569,9 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
             if flag_current_rank_run:
                 output_tokens = self.model_inputs["all_token_ids"].numpy()
                 output_tokens[output_tokens < 0] = self.tokenizer.pad_token_id
+                output_tokens = output_tokens.tolist()
+                for i, elem in enumerate(output_tokens):
+                    output_tokens[i] = elem[: elem.index(self.tokenizer.pad_token_id)]
                 if detokenize:
                     outputs = self.tokenizer.batch_decode(
                         output_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False
@@ -1720,16 +1723,18 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
             current_batch_size = len(req_block_ids)
             # logger.info(f'current_batch_size = {current_batch_size}')
 
-            input_ids = paddle.full([current_batch_size, self.config.total_max_length], 0, dtype=paddle.int64)
-            seq_lens_this_time = paddle.full([current_batch_size, 1], 0, dtype=paddle.int32)
-            seq_lens_encoder = paddle.full([current_batch_size, 1], 0, dtype=paddle.int32)
-            seq_lens_decoder = paddle.full([current_batch_size, 1], 0, dtype=paddle.int32)
-            block_tables = paddle.full([current_batch_size, max_num_blocks_per_row], fill_value=-1, dtype=paddle.int32)
-            excess_blocks = paddle.full([current_batch_size, repeat_num], fill_value=-1, dtype=paddle.int32)
-            next_tokens = paddle.full(shape=[current_batch_size, 1], fill_value=-1, dtype="int64")
+            input_ids = paddle.full([max_batch_size, self.config.total_max_length], 0, dtype=paddle.int64).cpu()
+            seq_lens_this_time = paddle.full([max_batch_size, 1], 0, dtype=paddle.int32).cpu()
+            seq_lens_encoder = paddle.full([max_batch_size, 1], 0, dtype=paddle.int32).cpu()
+            seq_lens_decoder = paddle.full([max_batch_size, 1], 0, dtype=paddle.int32).cpu()
+            block_tables = paddle.full(
+                [max_batch_size, max_num_blocks_per_row], fill_value=-1, dtype=paddle.int32
+            ).cpu()
+            excess_blocks = paddle.full([max_batch_size, repeat_num], fill_value=-1, dtype=paddle.int32).cpu()
 
-            pre_ids_np = np.full([current_batch_size, self.config.max_length], fill_value=-1, dtype=np.int64)
-            result_id_np = np.full([current_batch_size, repeat_num], fill_value=-1, dtype=np.int64)
+            pre_ids = paddle.full([max_batch_size, self.config.max_length], fill_value=-1, dtype="int64").cpu()
+            result_id = paddle.full([max_batch_size, repeat_num], fill_value=-1, dtype="int32").cpu()
+            next_tokens = paddle.full(shape=[max_batch_size, 1], fill_value=-1, dtype="int64")
 
             req_ids: list[int] = []
             # req_id -> index
@@ -1751,8 +1756,8 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
                 self.model_inputs["step_idx"][i] = decoder_req.num_output_tokens
                 self.model_inputs["stop_flags"][i] = False
                 pre_ids_list = [decoder_req.prompt_token_ids[-1]] + decoder_req.output_token_ids
-                pre_ids_np[i, : len(pre_ids_list)] = np.array(pre_ids_list)
-                result_id_np[i, 0] = request_id
+                pre_ids[i, : len(pre_ids_list)] = np.array(pre_ids_list)
+                result_id[i, 0] = request_id
 
             for j, prefill_req in enumerate(prefill_reqs):
                 i = j + len(decoder_reqs)
@@ -1775,27 +1780,29 @@ class DygraphBlockInferencePredictor(BlockInferencePredictorMixin):
                 self.model_inputs["step_idx"][i] = prefill_req.num_output_tokens
                 self.model_inputs["stop_flags"][i] = False
                 pre_ids_list = [prefill_req.prompt_token_ids[-1]]
-                pre_ids_np[i, : len(pre_ids_np)] = np.array(pre_ids_list)
-                result_id_np[i, :] = np.arange(
-                    query_id * repeat_num, query_id * repeat_num + repeat_num, dtype=np.int64
-                )
+                pre_ids[i, : len(pre_ids_list)] = np.array(pre_ids_list)
+                result_id[i, :] = np.arange(query_id * repeat_num, query_id * repeat_num + repeat_num, dtype=np.int32)
 
-            self.model_inputs["input_ids"] = input_ids
-            self.model_inputs["seq_lens_this_time"] = seq_lens_this_time
-            self.model_inputs["seq_lens_encoder"] = seq_lens_encoder
-            self.model_inputs["seq_lens_decoder"] = seq_lens_decoder
-            self.model_inputs["block_tables"] = block_tables
-            self.model_inputs["excess_blocks"] = excess_blocks
+            self.model_inputs["input_ids"] = input_ids.cuda()
+            self.model_inputs["seq_lens_this_time"] = seq_lens_this_time.cuda()
+            self.model_inputs["seq_lens_encoder"] = seq_lens_encoder.cuda()
+            self.model_inputs["seq_lens_decoder"] = seq_lens_decoder.cuda()
+            self.model_inputs["block_tables"] = block_tables.cuda()
+            self.model_inputs["excess_blocks"] = excess_blocks.cuda()
             self.model_inputs["next_tokens"] = next_tokens
 
-            self.model_inputs["pre_ids"][:current_batch_size] = pre_ids_np
-            self.model_inputs["result_id"][:current_batch_size] = result_id_np
+            self.model_inputs["pre_ids"][:current_batch_size].copy_(pre_ids, False)
+            self.model_inputs["result_id"][:current_batch_size].copy_(result_id, False)
 
-            self.model_inputs["stop_nums"][:current_batch_size] = current_batch_size
+            self.model_inputs["stop_nums"][0] = current_batch_size
             self.model_inputs["not_need_stop"][0] = True
 
             # run
-            next_tokens = self._infer(self.model_inputs).numpy().reshape([-1]).tolist()
+            # import nvtx
+            # transformer_nvtx = nvtx.start_range(message="infer", color="red")
+            next_tokens = self._infer(self.model_inputs)
+            # nvtx.end_range(transformer_nvtx)
+            next_tokens = next_tokens.numpy().reshape([-1]).tolist()
 
             stop_flags_this_step = self.model_inputs["stop_flags"].numpy().reshape([-1]).tolist()
 
@@ -2208,6 +2215,13 @@ def create_predictor(
     return predictor
 
 
+def read_matrix(file):
+    import ast
+
+    with open(file) as f:
+        return ast.literal_eval(f.read().strip())
+
+
 def predict():
     parser = PdArgumentParser((PredictorArgument, ModelArgument))
     predictor_args, model_args = parser.parse_args_into_dataclasses()
@@ -2255,6 +2269,9 @@ def predict():
         source_texts = [
             "2014年3月，大范围雾霾天气长时间影响我国东部地区，严重危害人体健康。造成雾霾天气的人为原因有____\r\n①工业生产中使用矿物作为燃料，大量排放污染物     ②汽车尾气的大量排放     \r\n③风力小，空气流动不畅     ④冬季取暖排放粉尘\nA. ①②③\nB. ②③④\nC. ①③④\nD. ①②④"
         ] * predictor_args.total_request_num
+        input_ids_path = "/root/paddlejob/workspace/env_run/output/chenkailun/rl/RL/error_data/attn.log"
+        input_ids = read_matrix(input_ids_path)
+        source_texts = input_ids[17:18]
         target_texts = [""] * predictor_args.total_request_num
 
     batch_source_texts = batchfy_text(source_texts, predictor_args.total_request_num)
@@ -2263,7 +2280,7 @@ def predict():
     with open(model_args.output_file, "w", encoding="utf-8") as f:
         for bs, batch_source_text in enumerate(batch_source_texts):
             logger.info("Start predict")
-            outputs = predictor.predict(batch_source_text)
+            outputs = predictor.predict(input_ids=batch_source_text)
             logger.info("End predict")
 
             if predictor.tensor_parallel_rank > 0:
